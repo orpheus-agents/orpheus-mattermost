@@ -1,2 +1,3 @@
-# orpheus-mattermost
-Connects Orpheus and Mattermost
+# Orpheus + Mattermost
+
+Connects Orpheus and Mattermost.
