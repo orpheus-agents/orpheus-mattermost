@@ -307,6 +307,9 @@ func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.E
 		key = e.Key().Operation(e.Anchor, "run", sessionID, predecessor)
 	default:
 		conf := api.ConfigurationInput{Agent: api.AgentInput{Profile: w.Profile, Instructions: new(w.Instructions)}, Sandbox: api.SandboxInput{Template: w.SandboxTemplate}, Limits: &api.LimitsInput{RunTimeoutSeconds: &w.RunTimeoutSeconds, MaxSessionTokens: &w.MaxSessionTokens}, Hooks: &api.HooksInput{BeforeRun: new(sandbox.BeforeRun()), AfterRun: new(sandbox.AfterRun()), TimeoutSeconds: &w.HookTimeoutSeconds}}
+		if len(w.EnvFrom) > 0 {
+			conf.Sandbox.EnvFrom = &w.EnvFrom
+		}
 		rawBody = api.CreateSession{Namespace: new(e.Key().Namespace()), ExternalKey: new(e.Key().External()), Configuration: conf, Message: message, Env: &env, EnvFrom: &envFrom, InputFingerprint: new("mm-v1:" + attachments.Hash([]byte(text)))}
 		key = e.Key().Operation(e.Anchor, "session", e.Key().External(), predecessor)
 	}

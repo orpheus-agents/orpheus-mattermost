@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -247,5 +248,59 @@ func TestHistoryWatermarkSeedsFirstSSESubscription(t *testing.T) {
 	}
 	if err = c.Watch(t.Context(), sid, func() {}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
+	for _, refs := range [][]string{nil, {"WORKER_TOKEN_A", "WORKER_TOKEN_B"}} {
+		for _, operation := range []string{"session", "run", "message"} {
+			t.Run(operation+strconv.Itoa(len(refs)), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var body struct {
+						Configuration *struct {
+							Sandbox struct {
+								EnvFrom []string `json:"env_from"`
+							} `json:"sandbox"`
+						} `json:"configuration"`
+						EnvFrom []string `json:"env_from"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						t.Error(err)
+					}
+					if operation == "session" {
+						if body.Configuration == nil || !slices.Equal(body.Configuration.Sandbox.EnvFrom, refs) {
+							t.Error("session environment references missing")
+						}
+					} else if body.Configuration != nil {
+						t.Error("session configuration sent with run or message")
+					}
+					if operation == "message" {
+						if len(body.EnvFrom) != 0 {
+							t.Error("message contains environment references")
+						}
+					} else if !slices.Equal(body.EnvFrom, []string{"MATTERMOST_BOT_TOKEN"}) {
+						t.Error("run must receive only Mattermost token reference")
+					}
+					w.WriteHeader(http.StatusAccepted)
+					_ = json.NewEncoder(w).Encode(map[string]string{"session_id": uuid.NewString(), "run_id": uuid.NewString(), "message_id": uuid.NewString()})
+				}))
+				defer server.Close()
+				client, err := New(config.Config{Orpheus: config.Endpoint{BaseURL: server.URL}, MaxRequestBytes: 1 << 20}, "token")
+				if err != nil {
+					t.Fatal(err)
+				}
+				workflow := config.Workflow{EnvFrom: refs, Mattermost: config.Endpoint{TokenEnv: "MATTERMOST_BOT_TOKEN"}}
+				var sessionID, runID string
+				if operation != "session" {
+					sessionID = uuid.NewString()
+				}
+				if operation == "message" {
+					runID = uuid.NewString()
+				}
+				if _, err := client.Submit(t.Context(), workflow, conversation.Envelope{}, "hello", sessionID, runID, ""); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
 	}
 }
