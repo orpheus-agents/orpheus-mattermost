@@ -306,7 +306,7 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 				}
 				message := p.Message
 				if origin == "thread_reference" {
-					message = "[Previously delivered post; reuse its context and the attachments listed in front matter.]"
+					message = ""
 				}
 				var postFiles []fileReference
 				if len(p.FileIDs) > 0 {
@@ -392,9 +392,7 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 						continue
 					}
 					if p.ChannelID == key.Channel && p.Root() == key.Root {
-						if seen[p.ID] {
-							fmt.Fprintf(&out, "[Reference to current-thread post %s; reuse its listed attachments]\n", p.ID)
-						} else {
+						if !seen[p.ID] {
 							origin := "thread"
 							if v, ok := knownVersions[p.ID]; !initial && ok && v == PostVersion(p) {
 								origin = "thread_reference"

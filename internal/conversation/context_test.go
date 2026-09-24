@@ -199,7 +199,7 @@ func TestSameThreadReferenceDeduplicatesFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(e.Request.Files) != 1 || s.threads != 0 || strings.Count(body, "original") != 1 {
+	if len(e.Request.Files) != 1 || s.threads != 0 || strings.Count(body, "original") != 1 || strings.Contains(body, "[Reference to current-thread post") {
 		t.Fatal("duplicate context or attachment", s.threads, len(e.Request.Files))
 	}
 }
@@ -263,7 +263,7 @@ func TestKnownSameThreadReferenceAndEditedVersion(t *testing.T) {
 	source.posts[original.ID] = original
 	source.posts[trigger.ID] = trigger
 	env, body, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{original, trigger}, snapshot, false, time.Unix(10, 0))
-	if err != nil || len(env.Request.Files) != 1 || source.threads != 0 || strings.Contains(body, "ORIGINAL_BODY") || !strings.Contains(body, "thread_reference") {
+	if err != nil || len(env.Request.Files) != 1 || source.threads != 0 || strings.Contains(body, "ORIGINAL_BODY") || !strings.Contains(body, "thread_reference") || strings.Contains(body, "Previously delivered post") {
 		t.Fatal("known same-thread context duplicated or files missing", err, body)
 	}
 	original.Message = "EDITED_BODY"

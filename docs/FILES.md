@@ -35,6 +35,8 @@ could not be opened. The manifest and index are internal recovery metadata, not
 required reading for the agent. Images from both the main thread and linked threads
 can be opened with `view_image`. Same-thread links do not expand the thread again;
 an explicitly referenced post omitted from earlier context is included once.
+A previously delivered post can be referenced again with metadata only, so its
+file paths are restored without repeating its text.
 Cards in `props.attachments` are text context, not uploaded Mattermost files.
 During continuation, the connector does not automatically feed its own answers or
 notices back to the agent. Explicit references and initial context in a replacement
