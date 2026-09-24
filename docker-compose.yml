@@ -1,0 +1,43 @@
+x-user-args: &user-args
+  ORPHEUS_UID: ${ORPHEUS_UID:-1000}
+  ORPHEUS_GID: ${ORPHEUS_GID:-1000}
+services:
+  app:
+    build:
+      context: .
+      dockerfile: .docker/app/dev/Dockerfile
+      args: *user-args
+    init: true
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - .:/app
+      - go-mod:/go/pkg/mod
+      - go-build:/home/orpheus/.cache/go-build
+    ports: ["127.0.0.1:8080:8080"]
+    stop_grace_period: 20s
+    healthcheck:
+      test: [CMD, go, run, ./cmd/orpheus-mattermost, healthcheck]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+  tools:
+    build:
+      context: .
+      dockerfile: .docker/tools/Dockerfile
+      args: *user-args
+    image: ${ORPHEUS_TOOLS_IMAGE:-orpheus-mattermost-tools}
+    profiles: [tools]
+    init: true
+    working_dir: /app
+    volumes:
+      - .:/app
+      - go-mod:/go/pkg/mod
+      - go-build:/home/orpheus/.cache/go-build
+      - tools-cache:/home/orpheus/.cache
+volumes:
+  go-mod:
+  go-build:
+  tools-cache:
