@@ -10,6 +10,7 @@ import (
 
 	"github.com/orpheus-agents/orpheus-mattermost/internal/config"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/mattermost"
+	"gopkg.in/yaml.v3"
 )
 
 func TestMentionMarkdown(t *testing.T) {
@@ -111,6 +112,82 @@ func builder(t *testing.T) (Builder, Key, *contextSource) {
 	s := &contextSource{posts: map[string]mattermost.Post{}}
 	key := Key{"chat", "assistant", id(1), id(2)}
 	return Builder{Source: s, Config: c, Workflow: c.Workflows[0], Bot: mattermost.User{ID: id(9), Username: "orpheus"}}, key, s
+}
+
+func firstPostFrontMatter(t *testing.T, text string) map[string]any {
+	t.Helper()
+	_, body, ok := strings.Cut(text, "\n\n")
+	if !ok {
+		t.Fatal("missing message body")
+	}
+	body, ok = strings.CutPrefix(body, "---\n")
+	if !ok {
+		t.Fatal("missing post front matter")
+	}
+	front, _, ok := strings.Cut(body, "\n---\n")
+	if !ok {
+		t.Fatal("unclosed post front matter")
+	}
+	var fields map[string]any
+	if err := yaml.Unmarshal([]byte(front), &fields); err != nil {
+		t.Fatal(err)
+	}
+	return fields
+}
+
+func TestPostFrontMatterShowsFilesOnlyWhenPresent(t *testing.T) {
+	b, key, source := builder(t)
+	post := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus hello"}
+	source.posts[post.ID] = post
+	_, text, err := b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := firstPostFrontMatter(t, text)
+	if _, ok := fields["attachments"]; ok || strings.Contains(text, "input_manifest") || strings.Contains(text, "Read input manifest") {
+		t.Fatalf("text-only post contains file instructions: %s", text)
+	}
+	post.FileIDs = []string{id(4)}
+	source.posts[post.ID] = post
+	env, text, err := b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields = firstPostFrontMatter(t, text)
+	files, ok := fields["attachments"].([]any)
+	if !ok || len(files) != 1 {
+		t.Fatalf("front matter attachments = %#v", fields["attachments"])
+	}
+	file, ok := files[0].(map[string]any)
+	if !ok || file["path"] != env.Request.Files[0].Path || file["file_id"] != id(4) {
+		t.Fatalf("front matter file = %#v", files[0])
+	}
+	if strings.Contains(text, "input_manifest") || strings.Contains(text, "Read input manifest") {
+		t.Fatalf("post asks agent to read internal manifest: %s", text)
+	}
+}
+
+type unavailableFilesSource struct{ *contextSource }
+
+func (s unavailableFilesSource) Files(context.Context, string) ([]mattermost.FileInfo, error) {
+	return nil, fmt.Errorf("source unavailable")
+}
+
+func TestPostFrontMatterMarksUnavailableSourceFile(t *testing.T) {
+	b, key, source := builder(t)
+	b.Source = unavailableFilesSource{source}
+	post := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus inspect", FileIDs: []string{id(4)}}
+	source.posts[post.ID] = post
+	env, text, err := b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := firstPostFrontMatter(t, text)
+	files := fields["attachments"].([]any)
+	file := files[0].(map[string]any)
+	if file["status"] != "source_access_failed" || file["path"] != nil || len(env.Request.Files) != 0 {
+		t.Fatalf("unavailable file was presented as ready: %#v", file)
+	}
 }
 func TestSameThreadReferenceDeduplicatesFiles(t *testing.T) {
 	b, k, s := builder(t)

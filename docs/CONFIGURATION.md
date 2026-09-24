@@ -75,7 +75,9 @@ time in RFC3339, not a moving lookback window. When transferring channel ownersh
 set an explicit cutover for the new workflow to avoid replaying another owner's
 old requests.
 
-The Markdown body becomes agent instructions. Changes to instructions, profile,
+The Markdown body is the complete set of connector-provided agent instructions;
+the connector does not append hidden instructions. See the suggested Mattermost
+file-handling paragraph in the [README](../README.md). Changes to instructions, profile,
 template, or semantic policy change the effective revision: the next request
 starts a new session after the current run finishes. If an Orpheus profile or
 AgentBox template changes under the same name, increment `revision` explicitly.
