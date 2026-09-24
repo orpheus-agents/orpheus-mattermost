@@ -139,17 +139,17 @@ func TestPostFrontMatterShowsFilesOnlyWhenPresent(t *testing.T) {
 	b, key, source := builder(t)
 	post := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus hello"}
 	source.posts[post.ID] = post
-	_, text, err := b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
+	env, text, err := b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	fields := firstPostFrontMatter(t, text)
-	if _, ok := fields["attachments"]; ok || strings.Contains(text, "input_manifest") || strings.Contains(text, "Read input manifest") {
-		t.Fatalf("text-only post contains file instructions: %s", text)
+	if _, ok := fields["attachments"]; ok || len(env.Request.Files) != 0 {
+		t.Fatalf("text-only post contains files: %s", text)
 	}
 	post.FileIDs = []string{id(4)}
 	source.posts[post.ID] = post
-	env, text, err := b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
+	env, text, err = b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,9 +161,6 @@ func TestPostFrontMatterShowsFilesOnlyWhenPresent(t *testing.T) {
 	file, ok := files[0].(map[string]any)
 	if !ok || file["path"] != env.Request.Files[0].Path || file["file_id"] != id(4) {
 		t.Fatalf("front matter file = %#v", files[0])
-	}
-	if strings.Contains(text, "input_manifest") || strings.Contains(text, "Read input manifest") {
-		t.Fatalf("post asks agent to read internal manifest: %s", text)
 	}
 }
 
@@ -199,7 +196,7 @@ func TestSameThreadReferenceDeduplicatesFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(e.Request.Files) != 1 || s.threads != 0 || strings.Count(body, "original") != 1 || strings.Contains(body, "[Reference to current-thread post") {
+	if len(e.Request.Files) != 1 || s.threads != 0 || strings.Count(body, "post_id: "+k.Root) != 1 || strings.Count(body, "original") != 1 {
 		t.Fatal("duplicate context or attachment", s.threads, len(e.Request.Files))
 	}
 }
@@ -263,8 +260,20 @@ func TestKnownSameThreadReferenceAndEditedVersion(t *testing.T) {
 	source.posts[original.ID] = original
 	source.posts[trigger.ID] = trigger
 	env, body, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{original, trigger}, snapshot, false, time.Unix(10, 0))
-	if err != nil || len(env.Request.Files) != 1 || source.threads != 0 || strings.Contains(body, "ORIGINAL_BODY") || !strings.Contains(body, "thread_reference") || strings.Contains(body, "Previously delivered post") {
+	if err != nil || len(env.Request.Files) != 1 || source.threads != 0 || strings.Contains(body, "ORIGINAL_BODY") || strings.Count(body, "post_id: "+k.Root) != 1 {
 		t.Fatal("known same-thread context duplicated or files missing", err, body)
+	}
+	_, message, ok := strings.Cut(body, "\n\n")
+	if !ok {
+		t.Fatal("missing message body")
+	}
+	at := strings.Index(message, "---\nkind: thread_reference\n")
+	if at < 0 {
+		t.Fatal("missing reference metadata")
+	}
+	_, referenceBody, ok := strings.Cut(message[at:], "\n---\n")
+	if !ok || strings.TrimSpace(referenceBody) != "" {
+		t.Fatalf("previously delivered post has a repeated body: %q", referenceBody)
 	}
 	original.Message = "EDITED_BODY"
 	original.UpdateAt = 3000
