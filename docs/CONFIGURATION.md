@@ -87,6 +87,7 @@ changes rotate sessions after active work finishes. Link expansion and its chann
 
 | Field | Default | Behavior |
 | --- | --- | --- |
+| `env_from` | `[]` | Worker ENV names passed as `configuration.sandbox.env_from` to the agent session |
 | `include_ids`, `exclude_ids` | `[]` | Specialized workflows reserve their channels ahead of a generic workflow |
 | `direct_messages` | `false` | One DM owner; messages need no mention |
 | `private_channels`, `group_messages` | `false` | Explicit opt-in for private/group channels |
@@ -103,6 +104,20 @@ changes rotate sessions after active work finishes. Link expansion and its chann
 | `max_session_tokens` | `100000000` | Session token budget |
 | `max_post_chars` | `12000` | Unicode code points, also capped by the server limit |
 | `initial_context_token_budget` | `100000` | Approximate context budget, with separate API/ENV byte checks |
+
+`env_from` contains unique environment variable names, never values. The connector
+does not resolve them. Provide values to the Orpheus worker and allow the names in
+`HARNESS_ENV_ALLOWLIST` on both API and worker. Orpheus validates reserved names
+and the allowlist; the worker resolves values when preparing the session.
+Changing this list rotates the session; reordering it does not.
+The Mattermost token reference remains run-scoped for file hooks unless explicitly
+included in this list.
+
+```yaml
+env_from:
+  - GITLAB_TOKEN
+  - GITLAB_HOST
+```
 
 Subsequent channel requests require a mention even when `start_on_mention=false`.
 Idle time does not close or rotate a session. Orpheus owns sandbox pauses. Budget

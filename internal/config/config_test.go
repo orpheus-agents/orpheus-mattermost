@@ -4,6 +4,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -169,6 +170,47 @@ func TestRevisionTracksInstructionsAndPolicy(t *testing.T) {
 	original := c.Workflows[0].EffectiveRevision
 	if err := c.validate(); err != nil || c.Workflows[0].EffectiveRevision != original {
 		t.Fatal("revision is not stable", err)
+	}
+}
+
+func TestWorkflowEnvironmentReferences(t *testing.T) {
+	base := workflowText(t)
+	dir := t.TempDir()
+	loadRefs := func(setting string) (Config, error) {
+		t.Helper()
+		writeWorkflow(t, dir, "assistant.md", strings.Replace(base, "---\n", "---\n"+setting+"\n", 1))
+		return example(t, map[string]string{"WORKFLOWS_DIR": dir})
+	}
+	initial, err := loadRefs("env_from: []")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Names are worker references: these variables need not exist in the connector.
+	configured, err := loadRefs("env_from: [WORKER_TOKEN_Z, WORKER_TOKEN_A]")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := configured.Workflows[0]
+	if !slices.Equal(w.EnvFrom, []string{"WORKER_TOKEN_A", "WORKER_TOKEN_Z"}) || w.EffectiveRevision == initial.Workflows[0].EffectiveRevision {
+		t.Fatal("environment references were not normalized or did not rotate the session")
+	}
+	reordered, err := loadRefs("env_from: [WORKER_TOKEN_A, WORKER_TOKEN_Z]")
+	if err != nil || reordered.Workflows[0].EffectiveRevision != w.EffectiveRevision {
+		t.Fatal("reference order changed the revision", err)
+	}
+	for _, setting := range []string{
+		"env_from: [WORKER_TOKEN_A, WORKER_TOKEN_A]",
+		"env_from: [private-token]",
+		"env_from: ['']",
+		"env_from: private-token",
+		"env_from: {WORKER_TOKEN_A: private-token}",
+	} {
+		t.Run(setting, func(t *testing.T) {
+			_, err := loadRefs(setting)
+			if err == nil || strings.Contains(err.Error(), "private-token") {
+				t.Fatal("invalid references accepted or values leaked", err)
+			}
+		})
 	}
 }
 

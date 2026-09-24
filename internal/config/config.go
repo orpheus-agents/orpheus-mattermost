@@ -60,6 +60,7 @@ type Workflow struct {
 	ReconcileFrom         string    `yaml:"reconcile_from"`
 	Profile               string    `yaml:"profile"`
 	SandboxTemplate       string    `yaml:"sandbox_template"`
+	EnvFrom               []string  `yaml:"env_from" json:"env_from,omitzero"`
 	StartOnMention        *bool     `yaml:"start_on_mention"`
 	DirectMessages        bool      `yaml:"direct_messages"`
 	PrivateChannels       bool      `yaml:"private_channels"`
@@ -225,6 +226,14 @@ func (c *Config) validate() error {
 			return fmt.Errorf("workflow %d: invalid identity, revision, profile or template", i)
 		}
 		ids[w.ID] = true
+		envNames := make(map[string]bool, len(w.EnvFrom))
+		for _, name := range w.EnvFrom {
+			if !envPattern.MatchString(name) || envNames[name] {
+				return fmt.Errorf("workflow %s: env_from must contain unique environment variable names", w.ID)
+			}
+			envNames[name] = true
+		}
+		slices.Sort(w.EnvFrom)
 		since, err := time.Parse(time.RFC3339, w.ReconcileFrom)
 		if err != nil || since.Location() != time.UTC {
 			return fmt.Errorf("workflow %s: reconcile_from must be fixed RFC3339 UTC", w.ID)

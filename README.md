@@ -20,7 +20,10 @@ restores work after disconnects and restarts.
    embedded in the connector and installed automatically; no template rebuild or
    pip dependencies are needed.
 4. Configure the Orpheus profile. Allow the Mattermost token's variable name in
-   the worker's `HARNESS_ENV_ALLOWLIST` and provide its value to the worker.
+   API and worker's `HARNESS_ENV_ALLOWLIST` and provide its value to the worker.
+   To pass tool credentials to the agent, list their worker ENV names in the
+   workflow's `env_from` and allow them in the same allowlist. The connector does
+   not need their values.
 5. Run `make start`; use `make stop` to shut down.
 
 Process settings come from ENV. Mattermost URL and token reference, workflow policy,
