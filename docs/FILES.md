@@ -29,9 +29,14 @@ Existing files and conversation history survive an idle pause. A reference to an
 older attachment verifies its cached bytes and restores a missing or changed copy;
 it does not download the entire history again.
 
-Images from both the main thread and linked threads are opened by the agent with
-`view_image` using local paths. Same-thread links do not expand the thread again;
+The post's YAML front matter lists incoming files and their expected local paths.
+The hook prepares them before the agent starts; a missing path means the file
+could not be opened. The manifest and index are internal recovery metadata, not
+required reading for the agent. Images from both the main thread and linked threads
+can be opened with `view_image`. Same-thread links do not expand the thread again;
 an explicitly referenced post omitted from earlier context is included once.
+A previously delivered post can be referenced again with metadata only, so its
+file paths are restored without repeating its text.
 Cards in `props.attachments` are text context, not uploaded Mattermost files.
 During continuation, the connector does not automatically feed its own answers or
 notices back to the agent. Explicit references and initial context in a replacement

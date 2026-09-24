@@ -138,6 +138,19 @@ func TestSubmitUsesPinnedClientAndStableKey(t *testing.T) {
 	if len(body["env_from"]) == 0 || len(body["input_fingerprint"]) == 0 {
 		t.Fatal("run environment or fingerprint missing")
 	}
+	var session struct {
+		Configuration struct {
+			Agent struct {
+				Instructions string `json:"instructions"`
+			} `json:"agent"`
+		} `json:"configuration"`
+	}
+	if err := json.Unmarshal(bodies[0], &session); err != nil {
+		t.Fatal(err)
+	}
+	if session.Configuration.Agent.Instructions != cfg.Workflows[0].Instructions {
+		t.Fatal("connector changed workflow instructions")
+	}
 }
 func TestSessionPagination(t *testing.T) {
 	pages := 0

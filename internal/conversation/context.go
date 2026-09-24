@@ -90,6 +90,15 @@ type Builder struct {
 	Bot      mattermost.User
 }
 
+type fileReference struct {
+	FileID string `json:"file_id"`
+	Name   string `json:"name,omitempty"`
+	MIME   string `json:"mime,omitempty"`
+	Size   int64  `json:"size_bytes,omitempty"`
+	Path   string `json:"path,omitempty"`
+	Status string `json:"status,omitempty"`
+}
+
 func (b Builder) Trigger(p mattermost.Post, channel mattermost.Channel, existing bool, user mattermost.User) bool {
 	if p.DeleteAt != 0 || p.UserID == b.Bot.ID || strings.HasPrefix(p.Type, "system_") || p.Type == "system_ephemeral" {
 		return false
@@ -297,38 +306,56 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 				}
 				message := p.Message
 				if origin == "thread_reference" {
-					message = "[Previously delivered post; reuse its context and the attachments listed below.]"
+					message = ""
 				}
-				author, _ := json.Marshal(map[string]any{"id": p.UserID, "username": u.Username, "nickname": u.Nickname})
-				fmt.Fprintf(&out, "---\nkind: %s\npost_id: %s\nroot_id: %s\nchannel_id: %s\nauthor: %s\ncreated_at: %s\n---\n%s\n", origin, p.ID, p.Root(), p.ChannelID, author, time.UnixMilli(p.CreateAt).UTC().Format(time.RFC3339Nano), message)
-				if raw := p.Props["attachments"]; len(raw) > 0 && origin != "thread_reference" {
-					fmt.Fprintf(&out, "structured_data.attachments: %s\n", raw)
-				}
-				e.Versions = append(e.Versions, PostVersion(p))
-				if (origin == "thread" || origin == "thread_reference") && !mandatory[p.ID] {
-					e.ContextIDs = append(e.ContextIDs, p.ID)
-				}
+				var postFiles []fileReference
 				if len(p.FileIDs) > 0 {
 					files, err := filesFor(p.ID)
 					if err != nil {
-						fmt.Fprintf(&out, "attachments: unavailable (source access failed)\n")
-						return nil //nolint:nilerr // The manifest records inaccessible source files explicitly.
+						for _, id := range p.FileIDs {
+							postFiles = append(postFiles, fileReference{FileID: id, Status: "source_access_failed"})
+						}
+					} else {
+						found := map[string]bool{}
+						for i, f := range files {
+							if !slices.Contains(p.FileIDs, f.ID) {
+								return fmt.Errorf("attachment not present on source post")
+							}
+							found[f.ID] = true
+							if fileSeen[f.ID] {
+								continue
+							}
+							fileSeen[f.ID] = true
+							input := attachments.InputFile{PostID: p.ID, FileID: f.ID, Origin: origin, Name: f.Name, MIME: f.MIME, Size: f.Size, Path: attachments.InputPath(f.ID, f.Name), ChannelID: p.ChannelID}
+							if i >= b.Workflow.Files.MaxPerPost {
+								input.Status = "file_limit_exceeded"
+							}
+							ref := fileReference{FileID: f.ID, Name: f.Name, MIME: f.MIME, Size: f.Size, Status: input.Status}
+							if input.Status == "" {
+								ref.Path = input.Path
+							}
+							postFiles = append(postFiles, ref)
+							e.Request.Files = append(e.Request.Files, input)
+						}
+						for _, id := range p.FileIDs {
+							if !found[id] {
+								postFiles = append(postFiles, fileReference{FileID: id, Status: "source_access_failed"})
+							}
+						}
 					}
-					for i, f := range files {
-						if !slices.Contains(p.FileIDs, f.ID) {
-							return fmt.Errorf("attachment not present on source post")
-						}
-						if fileSeen[f.ID] {
-							continue
-						}
-						fileSeen[f.ID] = true
-						input := attachments.InputFile{PostID: p.ID, FileID: f.ID, Origin: origin, Name: f.Name, MIME: f.MIME, Size: f.Size, Path: attachments.InputPath(f.ID, f.Name), ChannelID: p.ChannelID}
-						if i >= b.Workflow.Files.MaxPerPost {
-							input.Status = "file_limit_exceeded"
-						}
-						e.Request.Files = append(e.Request.Files, input)
-						fmt.Fprintf(&out, "attachment: %s\n", mustJSON(input))
-					}
+				}
+				author, _ := json.Marshal(map[string]any{"id": p.UserID, "username": u.Username, "nickname": u.Nickname})
+				fmt.Fprintf(&out, "---\nkind: %s\npost_id: %s\nroot_id: %s\nchannel_id: %s\nauthor: %s\ncreated_at: %s\n", origin, p.ID, p.Root(), p.ChannelID, author, time.UnixMilli(p.CreateAt).UTC().Format(time.RFC3339Nano))
+				if raw := p.Props["attachments"]; len(raw) > 0 && origin != "thread_reference" {
+					fmt.Fprintf(&out, "structured_data: %s\n", mustJSON(map[string]json.RawMessage{"attachments": raw}))
+				}
+				if len(postFiles) > 0 {
+					fmt.Fprintf(&out, "attachments: %s\n", mustJSON(postFiles))
+				}
+				fmt.Fprintf(&out, "---\n%s\n", message)
+				e.Versions = append(e.Versions, PostVersion(p))
+				if (origin == "thread" || origin == "thread_reference") && !mandatory[p.ID] {
+					e.ContextIDs = append(e.ContextIDs, p.ID)
 				}
 				out.WriteByte('\n')
 				return nil
@@ -365,9 +392,7 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 						continue
 					}
 					if p.ChannelID == key.Channel && p.Root() == key.Root {
-						if seen[p.ID] {
-							fmt.Fprintf(&out, "[Reference to current-thread post %s; reuse its listed attachments]\n", p.ID)
-						} else {
+						if !seen[p.ID] {
 							origin := "thread"
 							if v, ok := knownVersions[p.ID]; !initial && ok && v == PostVersion(p) {
 								origin = "thread_reference"
@@ -409,9 +434,6 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 						}
 					}
 				}
-			}
-			if len(e.Request.Files) > 0 {
-				fmt.Fprintf(&out, "\nRead input manifest: %s\nOpen relevant images with the local image tool; do not infer image content from filenames.\n", attachments.ManifestPath(e.Anchor))
 			}
 			body := out.String()
 			encoded, err := e.Encode(body)

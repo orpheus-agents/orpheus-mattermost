@@ -39,6 +39,13 @@ The application does not read `.env` itself; Docker
 Compose supplies it. See [configuration](docs/CONFIGURATION.md) and the
 [sandbox file protocol](docs/FILES.md).
 
+Suggested workflow text:
+
+> Do not edit input files in place. If you need to attach a result, read
+> `.orpheus/mattermost/current-run.json`, put the completed file in its `outbox`
+> using an atomic rename, and then send your final answer. The connector
+> attaches outbox files to the last answer of the run.
+
 Binary commands: `serve`, `validate`, and `healthcheck`. The embedded Python
 script handles `prepare-input`, `export-output`, and SDK `import-input`.
 File hooks upload files but never create Mattermost posts.

@@ -377,7 +377,7 @@ func TestClarificationAttachmentsUseOptionalSDKOrWaitForNextRun(t *testing.T) {
 		})
 	}
 }
-func TestTextClarificationNeedsNoSandboxAccessOrManifest(t *testing.T) {
+func TestTextClarificationNeedsNoSandboxAccess(t *testing.T) {
 	e, api, mm, _, key := fixture(t)
 	e.Sandbox = nil
 	w := e.Config.Workflows[0]
@@ -389,8 +389,8 @@ func TestTextClarificationNeedsNoSandboxAccessOrManifest(t *testing.T) {
 	if err := e.Thread(t.Context(), w, key, ch, true); err != nil {
 		t.Fatal(err)
 	}
-	if len(api.submitted) != 2 || api.submitted[1].Run == "" || strings.Contains(api.submitted[1].Text, "Read input manifest") {
-		t.Fatal("text clarification requires SDK/manifest")
+	if len(api.submitted) != 2 || api.submitted[1].Run == "" || len(api.submitted[1].Envelope.Request.Files) != 0 {
+		t.Fatal("text clarification unexpectedly needs file preparation")
 	}
 	api.snapshot.Sessions[0].Runs[0].Status = "completed"
 	mm.posts = append(mm.posts, mattermost.Post{ID: "tttttttttttttttttttttttttt", RootID: key.Root, ChannelID: key.Channel, UserID: "hhhhhhhhhhhhhhhhhhhhhhhhhh", Message: "@orpheus next", CreateAt: 7000})
