@@ -1,0 +1,6 @@
+.git
+.env*
+*.log
+.live
+workflows.local
+bin

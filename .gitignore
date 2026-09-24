@@ -1,0 +1,9 @@
+.env
+.env.live
+.DS_Store
+*.log
+bin/
+.live/
+workflows.local/
+__pycache__/
+*.pyc

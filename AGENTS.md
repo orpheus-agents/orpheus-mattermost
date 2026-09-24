@@ -17,5 +17,6 @@ Read [README.md](README.md).
 * Run `make fix gofix check` after completing the implementation.
 
 # Docs
+* Write in english
 * Follow the principles of Maxim Ilyakhov's "Write, Cut": be concise without losing substance.
 * Prefer clear structure, diagrams, and lists over long blocks of text.

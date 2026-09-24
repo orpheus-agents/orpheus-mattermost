@@ -1,0 +1,7 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  enable: [bodyclose, copyloopvar, durationcheck, errorlint, gocritic, loggercheck, misspell, nilerr, nolintlint, sloglint, unconvert]
+formatters:
+  enable: [gofmt, goimports]
