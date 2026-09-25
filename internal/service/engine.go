@@ -181,7 +181,7 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 				if !errors.Is(err, delivery.ErrUpload) {
 					return err
 				}
-				for _, notice := range delivery.Parts(p.Key, s.ID, r.ID, "attachments_failed", "Не удалось доставить вложения результата.", env.Render, nil) {
+				for _, notice := range delivery.Parts(p.Key, s.ID, r.ID, "attachments_failed", "Could not deliver the result attachments.", env.Render, nil) {
 					if err := p.Publish(ctx, notice); err != nil {
 						return err
 					}
@@ -204,7 +204,7 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 	if r.Terminal() && !stopped {
 		output, err = hookOutput(s, r, env, e.Bot.ID)
 		if err != nil {
-			if err = send("attachments_failed", "Не удалось доставить вложения результата.", nil); err != nil {
+			if err = send("attachments_failed", "Could not deliver the result attachments.", nil); err != nil {
 				return err
 			}
 			stopped = true
@@ -253,7 +253,7 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 		return send("run_status", text, nil)
 	}
 	if !hasAnswer && !stopped {
-		return send("empty_result", "Выполнение завершено без текстового ответа и файлов.", nil)
+		return send("empty_result", "Run finished without a text answer or files.", nil)
 	}
 	return nil
 }
@@ -471,7 +471,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 		return buildErr
 	}
 	if buildErr != nil {
-		return e.reject(ctx, p, env, messages, "Сообщение превышает допустимый размер входа. Разделите запрос.")
+		return e.reject(ctx, p, env, messages, "Message exceeds the input size limit. Split the request.")
 	}
 	if run != nil {
 		// Without optional SDK access, keep the entire batch in Mattermost until
@@ -582,7 +582,7 @@ func (e *Engine) submit(ctx context.Context, key conversation.Key, p pending, cu
 		if readErr := publisher.Refresh(ctx); readErr != nil {
 			return readErr
 		}
-		if err = e.reject(ctx, publisher, p.Envelope, p.Messages, "Запрос не принят Orpheus: "+code+". Исправьте запрос или конфигурацию."); err == nil {
+		if err = e.reject(ctx, publisher, p.Envelope, p.Messages, "Orpheus rejected the request: "+code+". Check the request or configuration."); err == nil {
 			e.clear(key)
 		}
 		return err

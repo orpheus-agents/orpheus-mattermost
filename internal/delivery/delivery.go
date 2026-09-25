@@ -168,7 +168,7 @@ func (p *Publisher) Publish(ctx context.Context, part Part) error {
 				continue
 			}
 			repair := part
-			repair.Text = "Вложение к ответу."
+			repair.Text = "Attachment for the answer."
 			repair.Receipt.MessageID = "attachment_repair:" + part.Receipt.MessageID + ":" + a.ArtifactID
 			repair.Receipt.Part = 0
 			repair.Receipt.Parts = 1
@@ -333,13 +333,13 @@ func Parts(key conversation.Key, sid, rid, mid, text string, render conversation
 }
 func Failure(r conversation.Run) string {
 	if r.StopReason == "token_limit" {
-		return "Достигнут лимит токенов. Для продолжения отправьте новое обращение."
+		return "Token limit reached. Start a new thread to continue."
 	}
 	if r.Status == "cancelled" {
-		return "Выполнение отменено."
+		return "Run cancelled."
 	}
 	if r.Status == "failed" {
-		return fmt.Sprintf("Выполнение завершилось с ошибкой (%s).", r.Error)
+		return fmt.Sprintf("Run failed (%s).", r.Error)
 	}
 	return ""
 }

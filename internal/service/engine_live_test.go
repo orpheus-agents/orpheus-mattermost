@@ -70,7 +70,7 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 	}
 	cfg.Workflows[0].SandboxTemplate = "codex"
 	w := cfg.Workflows[0]
-	root, err := mm.Create(ctx, mattermost.CreatePost{ChannelID: channel.ID, Message: "[orpheus-mattermost live test] Сквозная проверка изображений и файлов. Тред будет удалён."})
+	root, err := mm.Create(ctx, mattermost.CreatePost{ChannelID: channel.ID, Message: "[orpheus-mattermost live test] End-to-end image and file check; thread deleted after the test."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		post, err := mm.Create(ctx, mattermost.CreatePost{ChannelID: channel.ID, RootID: rootID, Message: "Тестовое изображение.", FileIDs: []string{file.ID}})
+		post, err := mm.Create(ctx, mattermost.CreatePost{ChannelID: channel.ID, RootID: rootID, Message: "Test image.", FileIDs: []string{file.ID}})
 		if err != nil {
 			t.Fatal(err)
 		}

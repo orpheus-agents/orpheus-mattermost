@@ -61,7 +61,7 @@ func setup() (*Publisher, *fakeMM, Part) {
 	mm := &fakeMM{files: map[string]mattermost.FileInfo{"file": {ID: "file"}}}
 	key := conversation.Key{Source: "chat", Workflow: "assistant", Channel: "channel", Root: "root"}
 	p := &Publisher{MM: mm, Key: key, BotID: "bot"}
-	part := Parts(key, "session", "run", "answer", "Готово", conversation.Render{Version: 1, MaxChars: 64}, []attachments.Artifact{{ArtifactID: "artifact", FileID: "file", SHA256: "hash"}})[0]
+	part := Parts(key, "session", "run", "answer", "Done", conversation.Render{Version: 1, MaxChars: 64}, []attachments.Artifact{{ArtifactID: "artifact", FileID: "file", SHA256: "hash"}})[0]
 	return p, mm, part
 }
 func TestLostCreateResponseReconciles(t *testing.T) {
