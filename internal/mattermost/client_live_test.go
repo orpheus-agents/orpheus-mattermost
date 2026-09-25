@@ -40,7 +40,7 @@ func TestLiveFileAndThread(t *testing.T) {
 		t.Fatal(e)
 	}
 	t.Logf("server max post chars: %d", limit)
-	root, e := c.Create(ctx, CreatePost{ChannelID: ch.ID, Message: "[orpheus-mattermost live test] Проверка API и вложений; автоматическое удаление после теста."})
+	root, e := c.Create(ctx, CreatePost{ChannelID: ch.ID, Message: "[orpheus-mattermost live test] API and attachment check; deleted after the test."})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -63,7 +63,7 @@ func TestLiveFileAndThread(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	post, e := c.Create(ctx, CreatePost{ChannelID: ch.ID, RootID: root.ID, Message: "Тестовое PNG-вложение.", FileIDs: []string{upload.ID}})
+	post, e := c.Create(ctx, CreatePost{ChannelID: ch.ID, RootID: root.ID, Message: "Test PNG attachment.", FileIDs: []string{upload.ID}})
 	if e != nil {
 		t.Fatal(e)
 	}
