@@ -143,7 +143,8 @@ func TestFinalMessageOwnsFilesAndFailureRemainsVisible(t *testing.T) {
 			}
 			env := api.submitted[0].Envelope
 			env.Render.Commentary = scenario != "commentary-disabled"
-			s.Messages[0].Text, _ = env.Encode("accepted input")
+			s.Messages[0].Text = "accepted input"
+			s.Messages[0].Metadata = testMetadata(env)
 			finalText := "final answer"
 			if scenario == "file-only" {
 				finalText = ""

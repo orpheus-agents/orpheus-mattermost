@@ -114,13 +114,18 @@ func builder(t *testing.T) (Builder, Key, *contextSource) {
 	return Builder{Source: s, Config: c, Workflow: c.Workflows[0], Bot: mattermost.User{ID: id(9), Username: "orpheus"}}, key, s
 }
 
+func buildJoined(b Builder, ctx context.Context, key Key, channel mattermost.Channel, posts []mattermost.Post, snapshot Snapshot, initial bool, now time.Time) (Envelope, string, error) {
+	env, messages, err := b.BuildMessages(ctx, key, channel, posts, snapshot, initial, now)
+	var out strings.Builder
+	for _, message := range messages {
+		out.WriteString(message.Text)
+	}
+	return env, out.String(), err
+}
+
 func firstPostFrontMatter(t *testing.T, text string) map[string]any {
 	t.Helper()
-	_, body, ok := strings.Cut(text, "\n\n")
-	if !ok {
-		t.Fatal("missing message body")
-	}
-	body, ok = strings.CutPrefix(body, "---\n")
+	body, ok := strings.CutPrefix(text, "---\n")
 	if !ok {
 		t.Fatal("missing post front matter")
 	}
@@ -135,11 +140,60 @@ func firstPostFrontMatter(t *testing.T, text string) map[string]any {
 	return fields
 }
 
+func TestBuildMessagesKeepsPostsSeparate(t *testing.T) {
+	b, key, source := builder(t)
+	first := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus first"}
+	second := mattermost.Post{ID: id(4), RootID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1100, Message: "@orpheus second"}
+	source.posts[first.ID], source.posts[second.ID] = first, second
+	env, messages, err := b.BuildMessages(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{first, second}, Snapshot{}, true, time.Unix(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[0].PostID != first.ID || messages[1].PostID != second.ID || !strings.Contains(messages[0].Text, "@orpheus first") || !strings.Contains(messages[1].Text, "@orpheus second") || strings.Contains(messages[0].Text, "@orpheus second") || strings.Contains(messages[1].Text, "@orpheus first") {
+		t.Fatalf("posts merged or reordered: %+v", messages)
+	}
+	if len(env.TriggerIDs) != 2 {
+		t.Fatalf("triggers: %+v", env.TriggerIDs)
+	}
+	if messages[len(messages)-1].PostID != env.TriggerIDs[len(env.TriggerIDs)-1] {
+		t.Fatalf("last message is not latest trigger: %+v", messages)
+	}
+}
+
+func TestBuildMessagesLeavesThreadAfterLinkedContext(t *testing.T) {
+	b, key, source := builder(t)
+	linked := mattermost.Post{ID: id(100), ChannelID: key.Channel, UserID: id(3), CreateAt: 500, Message: "linked context"}
+	trigger := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus read https://chat.example.com/team/pl/" + linked.ID}
+	continuation := mattermost.Post{ID: id(4), RootID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1500, Message: "and also Y"}
+	source.posts[linked.ID], source.posts[trigger.ID], source.posts[continuation.ID] = linked, trigger, continuation
+	env, messages, err := b.BuildMessages(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger, continuation}, Snapshot{}, true, time.Unix(10, 0))
+	if err != nil || len(messages) != 3 || messages[0].PostID != linked.ID || messages[1].PostID != trigger.ID || messages[2].PostID != continuation.ID || env.Anchor != trigger.ID {
+		t.Fatalf("linked context displaced thread posts: %+v %v", messages, err)
+	}
+	if !strings.Contains(messages[0].Text, "linked context") {
+		t.Fatalf("linked context absent: %+v", messages)
+	}
+}
+
+func TestBuildMessagesKeepsContinuationAfterTrigger(t *testing.T) {
+	b, key, source := builder(t)
+	trigger := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus do X"}
+	continuation := mattermost.Post{ID: id(4), RootID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1500, Message: "and also Y"}
+	source.posts[trigger.ID], source.posts[continuation.ID] = trigger, continuation
+	env, messages, err := b.BuildMessages(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger, continuation}, Snapshot{}, true, time.Unix(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(env.TriggerIDs) != 1 || env.TriggerIDs[0] != trigger.ID || len(messages) != 2 || messages[0].PostID != trigger.ID || messages[1].PostID != continuation.ID {
+		t.Fatalf("thread chronology changed: triggers=%v messages=%+v", env.TriggerIDs, messages)
+	}
+}
+
 func TestPostFrontMatterShowsFilesOnlyWhenPresent(t *testing.T) {
 	b, key, source := builder(t)
 	post := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus hello"}
 	source.posts[post.ID] = post
-	env, text, err := b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
+	env, text, err := buildJoined(b, t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +203,7 @@ func TestPostFrontMatterShowsFilesOnlyWhenPresent(t *testing.T) {
 	}
 	post.FileIDs = []string{id(4)}
 	source.posts[post.ID] = post
-	env, text, err = b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
+	env, text, err = buildJoined(b, t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +229,7 @@ func TestPostFrontMatterMarksUnavailableSourceFile(t *testing.T) {
 	b.Source = unavailableFilesSource{source}
 	post := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus inspect", FileIDs: []string{id(4)}}
 	source.posts[post.ID] = post
-	env, text, err := b.Build(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
+	env, text, err := buildJoined(b, t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, Snapshot{}, true, time.Unix(10, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +246,7 @@ func TestSameThreadReferenceDeduplicatesFiles(t *testing.T) {
 	for _, p := range posts {
 		s.posts[p.ID] = p
 	}
-	e, body, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, posts, Snapshot{}, true, time.Unix(10, 0))
+	e, body, err := buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, posts, Snapshot{}, true, time.Unix(10, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,14 +270,14 @@ func TestLinkedFarTargetAndChannelPolicy(t *testing.T) {
 	s.posts[target] = p
 	trigger := mattermost.Post{ID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus https://chat.example.com/team/pl/" + target}
 	s.posts[k.Root] = trigger
-	env, text, e := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger}, Snapshot{}, true, time.Unix(10, 0))
+	env, text, e := buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger}, Snapshot{}, true, time.Unix(10, 0))
 	if e != nil || !strings.Contains(text, "body-250") || len(env.Request.Files) != 1 {
 		t.Fatal("linked target missing", e)
 	}
 	p.ChannelID = id(800)
 	s.posts[target] = p
 	s.threads = 0
-	env, text, e = b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger}, Snapshot{}, true, time.Unix(10, 0))
+	env, text, e = buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger}, Snapshot{}, true, time.Unix(10, 0))
 	if e != nil || strings.Contains(text, "body-250") || len(env.Request.Files) != 0 || s.threads != 0 {
 		t.Fatal("cross-channel context leaked", e)
 	}
@@ -233,9 +287,9 @@ func TestContextDoesNotConsumeTrigger(t *testing.T) {
 	post := mattermost.Post{ID: id(5), RootID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 2000, Message: "@orpheus new"}
 	s.posts[post.ID] = post
 	old := Envelope{Schema: 1, Source: k.Source, Workflow: k.Workflow, Channel: k.Channel, Root: k.Root, Anchor: k.Root, TriggerIDs: []string{k.Root}, ContextIDs: []string{post.ID}, Kind: "initial", Render: Render{Version: 1, MaxChars: 12000}}
-	text, _ := old.Encode("previous")
-	snapshot := Snapshot{Sessions: []Session{{Messages: []Message{{Role: "user", Delivery: "delivered", Text: text}}}}}
-	env, _, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, snapshot, false, time.Unix(10, 0))
+	metadata, _ := json.Marshal(old)
+	snapshot := Snapshot{Sessions: []Session{{Messages: []Message{{Role: "user", Delivery: "delivered", Text: "previous", Metadata: metadata}}}}}
+	env, _, err := buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{post}, snapshot, false, time.Unix(10, 0))
 	if err != nil || len(env.TriggerIDs) != 1 || env.TriggerIDs[0] != post.ID {
 		t.Fatal("passive context consumed trigger", err)
 	}
@@ -251,34 +305,31 @@ func TestKnownSameThreadReferenceAndEditedVersion(t *testing.T) {
 	b, k, source := builder(t)
 	original := mattermost.Post{ID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 1000, Message: "ORIGINAL_BODY", FileIDs: []string{id(4)}}
 	old := Envelope{Schema: 1, Anchor: id(8), Kind: "initial", TriggerIDs: []string{id(8)}, ContextIDs: []string{k.Root}, Versions: []Version{PostVersion(original)}, Render: Render{Version: 1, MaxChars: 12000}}
-	oldText, err := old.Encode("previous request")
+	metadata, err := json.Marshal(old)
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot := Snapshot{Sessions: []Session{{Messages: []Message{{Role: "user", Delivery: "delivered", Text: oldText}}}}}
+	snapshot := Snapshot{Sessions: []Session{{Messages: []Message{{Role: "user", Delivery: "delivered", Text: "previous request", Metadata: metadata}}}}}
 	trigger := mattermost.Post{ID: id(5), RootID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 2000, Message: "@orpheus see https://chat.example.com/team/pl/" + k.Root}
 	source.posts[original.ID] = original
 	source.posts[trigger.ID] = trigger
-	env, body, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{original, trigger}, snapshot, false, time.Unix(10, 0))
+	env, body, err := buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{original, trigger}, snapshot, false, time.Unix(10, 0))
 	if err != nil || len(env.Request.Files) != 1 || source.threads != 0 || strings.Contains(body, "ORIGINAL_BODY") || strings.Count(body, "post_id: "+k.Root) != 1 {
 		t.Fatal("known same-thread context duplicated or files missing", err, body)
 	}
-	_, message, ok := strings.Cut(body, "\n\n")
-	if !ok {
-		t.Fatal("missing message body")
-	}
-	at := strings.Index(message, "---\nkind: thread_reference\n")
+	at := strings.Index(body, "---\nkind: thread_reference\n")
 	if at < 0 {
 		t.Fatal("missing reference metadata")
 	}
-	_, referenceBody, ok := strings.Cut(message[at:], "\n---\n")
+	_, referenceBody, ok := strings.Cut(body[at:], "\n---\n")
+	referenceBody, _, _ = strings.Cut(referenceBody, "\n\n---\nkind:")
 	if !ok || strings.TrimSpace(referenceBody) != "" {
 		t.Fatalf("previously delivered post has a repeated body: %q", referenceBody)
 	}
 	original.Message = "EDITED_BODY"
 	original.UpdateAt = 3000
 	source.posts[original.ID] = original
-	_, body, err = b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{original, trigger}, snapshot, false, time.Unix(10, 0))
+	_, body, err = buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{original, trigger}, snapshot, false, time.Unix(10, 0))
 	if err != nil || !strings.Contains(body, "EDITED_BODY") || source.threads != 0 {
 		t.Fatal("edited reference not refreshed", err)
 	}
@@ -288,7 +339,7 @@ func TestOversizedLinkedPostDoesNotRejectTrigger(t *testing.T) {
 	b.Config.MaxRequestBytes = 20000
 	trigger := mattermost.Post{ID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus see https://chat.example.com/team/pl/" + id(6)}
 	source.posts[id(6)] = mattermost.Post{ID: id(6), ChannelID: k.Channel, UserID: id(3), Message: strings.Repeat("huge", 10000)}
-	env, body, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger}, Snapshot{}, true, time.Unix(10, 0))
+	env, body, err := buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger}, Snapshot{}, true, time.Unix(10, 0))
 	if err != nil || len(env.TriggerIDs) != 1 || !strings.Contains(body, "context_limit_exceeded") || source.threads != 0 {
 		t.Fatal("linked context blocked required input", err)
 	}
@@ -315,7 +366,7 @@ func TestContinuationSkipsOwnPostsExceptExplicitReferences(t *testing.T) {
 	source.posts[answer.ID] = answer
 	source.posts[trigger.ID] = trigger
 	for _, initial := range []bool{false, true} {
-		env, body, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{answer, trigger}, Snapshot{}, initial, time.Unix(10, 0))
+		env, body, err := buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{answer, trigger}, Snapshot{}, initial, time.Unix(10, 0))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -324,7 +375,7 @@ func TestContinuationSkipsOwnPostsExceptExplicitReferences(t *testing.T) {
 		}
 	}
 	trigger.Message += " https://chat.example.com/team/pl/" + answer.ID
-	env, body, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{answer, trigger}, Snapshot{}, false, time.Unix(10, 0))
+	env, body, err := buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{answer, trigger}, Snapshot{}, false, time.Unix(10, 0))
 	if err != nil || !strings.Contains(body, "PREVIOUS_ANSWER") || len(env.Request.Files) != 1 {
 		t.Fatal("explicit output reference lost", err)
 	}
@@ -339,7 +390,7 @@ func TestPassiveFilesShrinkToTransportBudget(t *testing.T) {
 	}
 	trigger := mattermost.Post{ID: id(400), RootID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 4000, Message: "@orpheus summarize"}
 	posts = append(posts, trigger)
-	env, body, err := b.Build(t.Context(), k, mattermost.Channel{Type: "O"}, posts, Snapshot{}, true, time.Unix(10, 0))
+	env, body, err := buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, posts, Snapshot{}, true, time.Unix(10, 0))
 	if err != nil {
 		t.Fatal(err)
 	}

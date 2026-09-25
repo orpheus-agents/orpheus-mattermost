@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,6 +11,10 @@ import (
 func input(kind string) conversation.Envelope {
 	return conversation.Envelope{Schema: 1, Source: "chat", Workflow: "assistant", Channel: "channel", Root: "root", Anchor: "anchor", TriggerIDs: []string{"anchor"}, Kind: kind, Render: conversation.Render{Version: 1, MaxChars: 64}}
 }
+func testMetadata(e conversation.Envelope) json.RawMessage {
+	raw, _ := json.Marshal(e)
+	return raw
+}
 func TestTransferOnlyRejectedClarificationsAfterCompletion(t *testing.T) {
 	for _, tc := range []struct {
 		kind, status, stop string
@@ -17,24 +22,46 @@ func TestTransferOnlyRejectedClarificationsAfterCompletion(t *testing.T) {
 	}{{"initial", "completed", "", false}, {"initial", "failed", "", false}, {"clarification", "failed", "", false}, {"clarification", "cancelled", "", false}, {"clarification", "completed", "token_limit", false}, {"clarification", "completed", "", true}} {
 		t.Run(tc.kind+tc.status+tc.stop, func(t *testing.T) {
 			env := input(tc.kind)
-			text, _ := env.Encode("actual user request")
-			snap := conversation.Snapshot{Sessions: []conversation.Session{{Messages: []conversation.Message{{ID: "message", RunID: "run", Role: "user", Delivery: "rejected", Error: "run_finished_before_delivery", Text: text}}, Runs: []conversation.Run{{ID: "run", Status: tc.status, StopReason: tc.stop}}}}}
+			snap := conversation.Snapshot{Sessions: []conversation.Session{{Messages: []conversation.Message{{ID: "message", RunID: "run", Role: "user", Delivery: "rejected", Error: "run_finished_before_delivery", Text: "actual user request", Metadata: testMetadata(env)}}, Runs: []conversation.Run{{ID: "run", Status: tc.status, StopReason: tc.stop}}}}}
 			e, body, pred, ok := transfer(snap)
 			if ok != tc.want {
 				t.Fatal(ok)
 			}
-			if ok && (e.Kind != "initial" || body != "actual user request" || pred != "message") {
+			if ok && (e.Kind != "initial" || joinedInput(body) != "actual user request" || pred != "message") {
 				t.Fatal("invalid transfer")
 			}
 			if ok {
 				e.Predecessor = pred
-				transferred, _ := e.Encode(body)
-				snap.Sessions[0].Messages = append(snap.Sessions[0].Messages, conversation.Message{Text: transferred})
+				snap.Sessions[0].Messages = append(snap.Sessions[0].Messages, conversation.Message{Text: joinedInput(body), Metadata: testMetadata(e)})
 				if _, _, _, ok = transfer(snap); ok {
 					t.Fatal("transferred twice")
 				}
 			}
 		})
+	}
+}
+
+func TestTransferPreservesSeparateClarificationMessages(t *testing.T) {
+	env := input("clarification")
+	snap := conversation.Snapshot{Sessions: []conversation.Session{{Messages: []conversation.Message{
+		{ID: "first", RunID: "run", Role: "user", Delivery: "rejected", Text: "first post"},
+		{ID: "last", RunID: "run", Role: "user", Delivery: "rejected", Error: "run_finished_before_delivery", Text: "second post", Metadata: testMetadata(env)},
+	}, Runs: []conversation.Run{{ID: "run", Status: "completed"}}}}}
+	got, messages, predecessor, ok := transfer(snap)
+	if !ok || got.Kind != "initial" || predecessor != "last" || len(messages) != 2 || messages[0].Text != "first post" || messages[1].Text != "second post" {
+		t.Fatalf("clarification transfer merged posts: %+v %+v %s %v", got, messages, predecessor, ok)
+	}
+}
+
+func TestTransferOmitsAlreadyDeliveredClarification(t *testing.T) {
+	env := input("clarification")
+	snap := conversation.Snapshot{Sessions: []conversation.Session{{Messages: []conversation.Message{
+		{ID: "first", RunID: "run", Role: "user", Delivery: "delivered", Text: "already delivered"},
+		{ID: "last", RunID: "run", Role: "user", Delivery: "rejected", Error: "run_finished_before_delivery", Text: "retry this", Metadata: testMetadata(env)},
+	}, Runs: []conversation.Run{{ID: "run", Status: "completed"}}}}}
+	_, messages, _, ok := transfer(snap)
+	if !ok || len(messages) != 1 || messages[0].Text != "retry this" {
+		t.Fatalf("transfer duplicated delivered input: %+v", messages)
 	}
 }
 func TestConflictingGenerationsBlock(t *testing.T) {

@@ -93,7 +93,7 @@ func TestPaginationBeyond200Items(t *testing.T) {
 	}
 }
 
-func TestSubmitUsesPinnedClientAndStableKey(t *testing.T) {
+func TestSubmitUsesTypedClientAndStableKey(t *testing.T) {
 	var bodies [][]byte
 	var keys []string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,9 +122,9 @@ func TestSubmitUsesPinnedClientAndStableKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := conversation.Envelope{Schema: 1, Source: "chat", Workflow: "assistant", Channel: "aaaaaaaaaaaaaaaaaaaaaaaaaa", Root: "bbbbbbbbbbbbbbbbbbbbbbbbbb", Anchor: "cccccccccccccccccccccccccc", Kind: "initial", Render: conversation.Render{Version: 1, MaxChars: 64}, TriggerIDs: []string{"cccccccccccccccccccccccccc"}, Request: attachments.Request{Schema: 1, SourceID: "chat"}}
-	text, _ := env.Encode("hello")
+	text := "hello"
 	for range 2 {
-		if _, err = c.Submit(t.Context(), cfg.Workflows[0], env, text, "", "", ""); err != nil {
+		if _, err = c.Submit(t.Context(), cfg.Workflows[0], env, []conversation.InputMessage{{Text: text}}, "", "", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -138,6 +138,34 @@ func TestSubmitUsesPinnedClientAndStableKey(t *testing.T) {
 	_ = json.Unmarshal(bodies[0], &body)
 	if len(body["env_from"]) == 0 || len(body["input_fingerprint"]) == 0 {
 		t.Fatal("run environment or fingerprint missing")
+	}
+	var submitted struct {
+		Text     string                `json:"text"`
+		Metadata conversation.Envelope `json:"metadata"`
+	}
+	var request struct {
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(bodies[0], &request); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(request.Messages[0], &submitted); err != nil {
+		t.Fatal(err)
+	}
+	if submitted.Text != "hello" || submitted.Metadata.Anchor != env.Anchor || strings.Contains(submitted.Text, "orpheus_mattermost_input") {
+		t.Fatalf("metadata leaked into model text: %+v", submitted)
+	}
+	changed := env
+	changed.Render.Commentary = !env.Render.Commentary
+	if _, err := c.Submit(t.Context(), cfg.Workflows[0], changed, []conversation.InputMessage{{Text: text}}, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	var changedBody map[string]json.RawMessage
+	if err := json.Unmarshal(bodies[2], &changedBody); err != nil {
+		t.Fatal(err)
+	}
+	if string(changedBody["input_fingerprint"]) == string(body["input_fingerprint"]) {
+		t.Fatal("metadata change did not change input fingerprint")
 	}
 	var session struct {
 		Configuration struct {
@@ -174,6 +202,77 @@ func TestSessionPagination(t *testing.T) {
 	sessions, err := c.Sessions(t.Context(), "mattermost/assistant", "")
 	if err != nil || len(sessions) != 2 || pages != 2 {
 		t.Fatal(len(sessions), pages, err)
+	}
+}
+
+func TestSnapshotReadsMessageMetadata(t *testing.T) {
+	key := conversation.Key{Source: "chat", Workflow: "assistant", Channel: strings.Repeat("a", 26), Root: strings.Repeat("b", 26)}
+	envelope := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Channel: key.Channel, Root: key.Root, Anchor: strings.Repeat("c", 26), Kind: "initial", TriggerIDs: []string{strings.Repeat("c", 26)}, Render: conversation.Render{Version: 2, MaxChars: 12000}}
+	sid, rid := uuid.NewString(), uuid.NewString()
+	includeMetadata := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/sessions":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": sid, "namespace": key.Namespace(), "external_key": key.External(), "created_at": time.Now(), "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 1000}}}}})
+		case strings.HasSuffix(r.URL.Path, "/runs"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": rid, "session_id": sid, "number": 1, "status": "completed"}}})
+		case strings.HasSuffix(r.URL.Path, "/history"):
+			message := map[string]any{"id": uuid.NewString(), "run_id": rid, "role": "user", "text": "clean task", "external_key": key.MessageKey(envelope.Anchor)}
+			if includeMetadata {
+				message["metadata"] = envelope
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"type": "message", "message": message}}, "event_cursor": "1"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c, err := New(config.Config{Orpheus: config.Endpoint{BaseURL: server.URL}}, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := c.Snapshot(t.Context(), key)
+	if err != nil || len(snapshot.Sessions) != 1 || len(snapshot.Sessions[0].Messages) != 1 {
+		t.Fatalf("metadata snapshot missing: %+v %v", snapshot, err)
+	}
+	message := snapshot.Sessions[0].Messages[0]
+	decoded, err := conversation.Decode(message.Metadata)
+	if err != nil || decoded.Anchor != envelope.Anchor || message.Text != "clean task" {
+		t.Fatalf("bad input snapshot: %+v %v", message, err)
+	}
+	includeMetadata = false
+	if _, err := c.Snapshot(t.Context(), key); err == nil {
+		t.Fatal("owned input without metadata accepted")
+	}
+}
+
+func TestSnapshotPreservesHistoryOrder(t *testing.T) {
+	key := conversation.Key{Source: "chat", Workflow: "assistant", Channel: strings.Repeat("a", 26), Root: strings.Repeat("b", 26)}
+	envelope := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Channel: key.Channel, Root: key.Root, Anchor: strings.Repeat("c", 26), Kind: "initial", TriggerIDs: []string{strings.Repeat("c", 26)}, Render: conversation.Render{Version: 2, MaxChars: 12000}}
+	sid, rid := uuid.NewString(), uuid.NewString()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/sessions":
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": sid, "namespace": key.Namespace(), "external_key": key.External(), "created_at": time.Now(), "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 1000}}}}})
+		case strings.HasSuffix(r.URL.Path, "/runs"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": rid, "session_id": sid, "number": 1, "status": "completed"}}})
+		case strings.HasSuffix(r.URL.Path, "/history"):
+			// The core history endpoint orders injected and turn input messages.
+			last := map[string]any{"id": uuid.NewString(), "run_id": rid, "role": "user", "text": "second", "external_key": key.MessageKey(envelope.Anchor), "metadata": envelope, "registered_sequence": "2", "position": map[string]int{"run_number": 1, "item_index": 1}}
+			first := map[string]any{"id": uuid.NewString(), "run_id": rid, "role": "user", "text": "first", "registered_sequence": "1"}
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"type": "message", "message": first}, map[string]any{"type": "message", "message": last}}, "event_cursor": "2"})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	c, err := New(config.Config{Orpheus: config.Endpoint{BaseURL: server.URL}}, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := c.Snapshot(t.Context(), key)
+	if err != nil || len(snapshot.Sessions) != 1 || len(snapshot.Sessions[0].Messages) != 2 || snapshot.Sessions[0].Messages[0].Text != "first" || snapshot.Sessions[0].Messages[1].Text != "second" {
+		t.Fatalf("batch order lost: %+v %v", snapshot, err)
 	}
 }
 func TestErrorsDoNotEchoServerSecrets(t *testing.T) {
@@ -257,6 +356,10 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 			t.Run(operation+strconv.Itoa(len(refs)), func(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					var body struct {
+						Messages []struct {
+							Text     string         `json:"text"`
+							Metadata map[string]any `json:"metadata"`
+						} `json:"messages"`
 						Configuration *struct {
 							Sandbox struct {
 								EnvFrom []string `json:"env_from"`
@@ -266,6 +369,9 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 					}
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Error(err)
+					}
+					if len(body.Messages) != 2 || body.Messages[0].Text != "first" || body.Messages[0].Metadata != nil || body.Messages[1].Text != "hello" || body.Messages[1].Metadata == nil {
+						t.Error("batch order, text or metadata changed")
 					}
 					if operation == "session" {
 						if body.Configuration == nil || !slices.Equal(body.Configuration.Sandbox.EnvFrom, refs) {
@@ -297,7 +403,7 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 				if operation == "message" {
 					runID = uuid.NewString()
 				}
-				if _, err := client.Submit(t.Context(), workflow, conversation.Envelope{}, "hello", sessionID, runID, ""); err != nil {
+				if _, err := client.Submit(t.Context(), workflow, conversation.Envelope{}, []conversation.InputMessage{{Text: "first"}, {Text: "hello"}}, sessionID, runID, ""); err != nil {
 					t.Fatal(err)
 				}
 			})

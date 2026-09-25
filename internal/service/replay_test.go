@@ -44,7 +44,7 @@ func (a *replayAPI) Sessions(context.Context, string, string) ([]conversation.Se
 func (a *replayAPI) Snapshot(_ context.Context, key conversation.Key) (conversation.Snapshot, error) {
 	return a.snapshots[key], nil
 }
-func (a *replayAPI) Submit(context.Context, config.Workflow, conversation.Envelope, string, string, string, string) (conversation.Accepted, error) {
+func (a *replayAPI) Submit(context.Context, config.Workflow, conversation.Envelope, []conversation.InputMessage, string, string, string) (conversation.Accepted, error) {
 	a.submits.Add(1)
 	return conversation.Accepted{}, fmt.Errorf("replay must not create a new run")
 }
@@ -74,14 +74,11 @@ func TestReplayRecovery1000Threads(t *testing.T) {
 			continue
 		}
 		env := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: w.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: key.Root, Kind: "initial", TriggerIDs: []string{key.Root}, Render: conversation.Render{Version: 2, MaxChars: 12000}}
-		body, err := env.Encode("accepted request")
-		if err != nil {
-			t.Fatal(err)
-		}
+		body := "accepted request"
 		sid, rid, mid := uuid.NewString(), uuid.NewString(), uuid.NewString()
 		s := conversation.Session{ID: sid, ExternalKey: key.External(), Revision: w.EffectiveRevision, MaxTokens: 1000000,
 			Runs:     []conversation.Run{{ID: rid, SessionID: sid, Status: "completed", FinalMessageID: mid}},
-			Messages: []conversation.Message{{ID: uuid.NewString(), RunID: rid, Role: "user", Delivery: "delivered", Text: body, ExternalKey: key.MessageKey(key.Root)}, {ID: mid, RunID: rid, Role: "assistant", Kind: "answer", Text: "recovered answer", Position: 1}}}
+			Messages: []conversation.Message{{ID: uuid.NewString(), RunID: rid, Role: "user", Delivery: "delivered", Text: body, Metadata: testMetadata(env), ExternalKey: key.MessageKey(key.Root)}, {ID: mid, RunID: rid, Role: "assistant", Kind: "answer", Text: "recovered answer", Position: 1}}}
 		api.sessions = append(api.sessions, s)
 		api.snapshots[key] = conversation.Snapshot{Sessions: []conversation.Session{s}}
 	}

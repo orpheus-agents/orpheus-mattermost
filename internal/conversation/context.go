@@ -192,8 +192,16 @@ func initialContext(posts []mattermost.Post, mandatory map[string]bool, root str
 	return result
 }
 
-// Build selects a deterministic prefix of triggers; none is consumed without its text.
-func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel, posts []mattermost.Post, snapshot Snapshot, initial bool, now time.Time) (Envelope, string, error) {
+// InputMessage is one agent-visible item. PostID is empty for context notices.
+type InputMessage struct {
+	PostID string `json:"-"`
+	Text   string `json:"text"`
+}
+
+const maxInputMessages = 256
+
+// BuildMessages selects a deterministic prefix of triggers as separate items.
+func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.Channel, posts []mattermost.Post, snapshot Snapshot, initial bool, now time.Time) (Envelope, []InputMessage, error) {
 	known, contextIDs := snapshot.Known()
 	knownVersions := map[string]Version{}
 	for _, session := range snapshot.Sessions {
@@ -201,7 +209,7 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 			if message.Role != "user" || message.Delivery != "delivered" {
 				continue
 			}
-			env, err := Decode(message.Text)
+			env, err := Decode(message.Metadata)
 			if err != nil {
 				continue
 			}
@@ -225,7 +233,7 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 			var err error
 			u, err = b.Source.User(ctx, p.UserID)
 			if err != nil {
-				return Envelope{}, "", err
+				return Envelope{}, nil, err
 			}
 			users[p.UserID] = u
 		}
@@ -234,12 +242,12 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 		}
 	}
 	if len(candidates) == 0 {
-		return Envelope{}, "", nil
+		return Envelope{}, nil, nil
 	}
 	anchor := candidates[0]
 	end := anchor.CreateAt + b.Workflow.MessageBatchWindow.Value().Milliseconds()
 	if now.UnixMilli() < end {
-		return Envelope{}, "", nil
+		return Envelope{}, nil, nil
 	}
 	var triggers []mattermost.Post
 	for _, p := range candidates {
@@ -289,7 +297,12 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 			e.Request = attachments.Request{Schema: 1, BotID: b.Bot.ID, SourceID: key.Source, ChannelID: key.Channel, RootID: key.Root, AnchorID: anchor.ID, Limits: b.Workflow.Files, AllowedPairs: b.Workflow.Links.AllowedChannelPairs, Files: []attachments.InputFile{}}
 			seen := map[string]bool{}
 			fileSeen := map[string]bool{}
-			var out strings.Builder
+			var messages []InputMessage
+			totalBytes := 0
+			appendMessage := func(postID, value string) {
+				messages = append(messages, InputMessage{PostID: postID, Text: value})
+				totalBytes += len(value)
+			}
 			write := func(p mattermost.Post, origin string) error {
 				if seen[p.ID] {
 					return nil
@@ -344,6 +357,7 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 						}
 					}
 				}
+				var out strings.Builder
 				author, _ := json.Marshal(map[string]any{"id": p.UserID, "username": u.Username, "nickname": u.Nickname})
 				fmt.Fprintf(&out, "---\nkind: %s\npost_id: %s\nroot_id: %s\nchannel_id: %s\nauthor: %s\ncreated_at: %s\n", origin, p.ID, p.Root(), p.ChannelID, author, time.UnixMilli(p.CreateAt).UTC().Format(time.RFC3339Nano))
 				if raw := p.Props["attachments"]; len(raw) > 0 && origin != "thread_reference" {
@@ -358,15 +372,17 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 					e.ContextIDs = append(e.ContextIDs, p.ID)
 				}
 				out.WriteByte('\n')
+				appendMessage(p.ID, out.String())
 				return nil
 			}
 			for _, p := range chosen {
 				if err := write(p, "thread"); err != nil {
-					return Envelope{}, "", err
+					return Envelope{}, nil, err
 				}
 			}
+			threadCount := len(messages)
 			if len(chosen) < len(eligible) {
-				fmt.Fprintf(&out, "[Context omitted: %d posts, %s — %s]\n", len(eligible)-len(chosen), time.UnixMilli(eligible[0].CreateAt).UTC().Format(time.RFC3339), time.UnixMilli(eligible[len(eligible)-1].CreateAt).UTC().Format(time.RFC3339))
+				appendMessage("", fmt.Sprintf("[Context omitted: %d posts, %s — %s]\n", len(eligible)-len(chosen), time.UnixMilli(eligible[0].CreateAt).UTC().Format(time.RFC3339), time.UnixMilli(eligible[len(eligible)-1].CreateAt).UTC().Format(time.RFC3339)))
 			}
 			if *b.Workflow.Links.Enabled {
 				links := []string{}
@@ -384,11 +400,11 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 				for _, id := range links[:min(len(links), b.Workflow.Links.MaxLinks)] {
 					p, err := b.Source.Post(ctx, id)
 					if err != nil || p.DeleteAt != 0 {
-						fmt.Fprintf(&out, "[Linked post %s: unavailable]\n", id)
+						appendMessage("", fmt.Sprintf("[Linked post %s: unavailable]\n", id))
 						continue
 					}
 					if !b.Workflow.AllowsLink(p.ChannelID, key.Channel) {
-						fmt.Fprintf(&out, "[Linked post %s: source_not_allowed]\n", id)
+						appendMessage("", fmt.Sprintf("[Linked post %s: source_not_allowed]\n", id))
 						continue
 					}
 					if p.ChannelID == key.Channel && p.Root() == key.Root {
@@ -397,64 +413,71 @@ func (b Builder) Build(ctx context.Context, key Key, channel mattermost.Channel,
 							if v, ok := knownVersions[p.ID]; !initial && ok && v == PostVersion(p) {
 								origin = "thread_reference"
 							}
-							if origin != "thread_reference" && postCost(p) > min(budget, b.Config.MaxRequestBytes/2)-out.Len() {
-								fmt.Fprintf(&out, "[Linked post %s: context_limit_exceeded]\n", p.ID)
+							if origin != "thread_reference" && postCost(p) > min(budget, b.Config.MaxRequestBytes/2)-totalBytes {
+								appendMessage("", fmt.Sprintf("[Linked post %s: context_limit_exceeded]\n", p.ID))
 								continue
 							}
 							if err := write(p, origin); err != nil {
-								return Envelope{}, "", err
+								return Envelope{}, nil, err
 							}
 						}
 						continue
 					}
-					if postCost(p) > min(budget, b.Config.MaxRequestBytes/2)-out.Len() {
-						fmt.Fprintf(&out, "[Linked post %s: context_limit_exceeded]\n", p.ID)
+					if postCost(p) > min(budget, b.Config.MaxRequestBytes/2)-totalBytes {
+						appendMessage("", fmt.Sprintf("[Linked post %s: context_limit_exceeded]\n", p.ID))
 						continue
 					}
 					linked, err := b.Source.Thread(ctx, p.ID)
 					if err != nil {
-						fmt.Fprintf(&out, "[Linked post %s: unavailable]\n", id)
+						appendMessage("", fmt.Sprintf("[Linked post %s: unavailable]\n", id))
 						continue
 					}
 					selection := linkedSelection(linked, p.ID, p.Root(), b.Workflow.Links.MaxPosts)
-					remaining := min(budget, b.Config.MaxRequestBytes/2) - out.Len() - postCost(p)
+					remaining := min(budget, b.Config.MaxRequestBytes/2) - totalBytes - postCost(p)
 					// Reserve room for the exact linked target before optional neighboring posts.
 					for _, lp := range selection {
 						if lp.ID != p.ID {
 							if postCost(lp) > remaining {
-								fmt.Fprintf(&out, "[Linked post %s: context_limit_exceeded]\n", lp.ID)
+								appendMessage("", fmt.Sprintf("[Linked post %s: context_limit_exceeded]\n", lp.ID))
 								continue
 							}
 							remaining -= postCost(lp)
 						}
 						if lp.DeleteAt == 0 {
 							if err := write(lp, "linked_thread"); err != nil {
-								return Envelope{}, "", err
+								return Envelope{}, nil, err
 							}
 						}
 					}
 				}
 			}
-			body := out.String()
-			encoded, err := e.Encode(body)
+			// Keep the thread in chronological order. Put optional linked context
+			// and notices before it so turn/start receives its latest post.
+			ordered := make([]InputMessage, 0, len(messages))
+			ordered = append(ordered, messages[threadCount:]...)
+			messages = append(ordered, messages[:threadCount]...)
+			encoded, err := json.Marshal(struct {
+				Messages []InputMessage `json:"messages"`
+				Metadata Envelope       `json:"metadata"`
+			}{Messages: messages, Metadata: e})
 			if err != nil {
-				return Envelope{}, "", err
+				return Envelope{}, nil, err
 			}
 			request, _ := json.Marshal(e.Request)
-			if len(encoded) < b.Config.MaxRequestBytes*3/4 && len(request) < 60<<10 {
-				return e, encoded, nil
+			if len(messages) <= maxInputMessages && len(encoded) < b.Config.MaxRequestBytes*3/4 && len(request) < 60<<10 {
+				return e, messages, nil
 			}
 			if budget > 0 {
 				budget /= 2
 				continue
 			}
 			if count == 1 {
-				return e, encoded, fmt.Errorf("input_too_large")
+				return e, messages, fmt.Errorf("input_too_large")
 			}
 			break
 		}
 	}
-	return Envelope{}, "", nil
+	return Envelope{}, nil, nil
 }
 func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 func linkedSelection(posts []mattermost.Post, target, root string, limit int) []mattermost.Post {

@@ -29,8 +29,8 @@ func (f *fakeAPI) Snapshot(context.Context, conversation.Key) (conversation.Snap
 	return f.snapshot, nil
 }
 func (f *fakeAPI) Cancel(context.Context, string, string) error { f.cancelled++; return nil }
-func (f *fakeAPI) Submit(_ context.Context, w config.Workflow, env conversation.Envelope, text, sid, rid, pred string) (conversation.Accepted, error) {
-	f.submitted = append(f.submitted, pending{w, env, text, sid, rid, pred})
+func (f *fakeAPI) Submit(_ context.Context, w config.Workflow, env conversation.Envelope, messages []conversation.InputMessage, sid, rid, pred string) (conversation.Accepted, error) {
+	f.submitted = append(f.submitted, pending{Workflow: w, Envelope: env, Messages: messages, Session: sid, Run: rid, Predecessor: pred})
 	if sid == "" {
 		sid = uuid.NewString()
 		f.snapshot.Sessions = append(f.snapshot.Sessions, conversation.Session{ID: sid, Revision: w.EffectiveRevision, MaxTokens: 1000000})
@@ -40,8 +40,16 @@ func (f *fakeAPI) Submit(_ context.Context, w config.Workflow, env conversation.
 		rid = uuid.NewString()
 		s.Runs = append(s.Runs, conversation.Run{ID: rid, SessionID: sid, Status: "running", Number: len(s.Runs) + 1, Hooks: []conversation.Hook{{Name: "before_run", Status: "completed"}}})
 	}
-	mid := uuid.NewString()
-	s.Messages = append(s.Messages, conversation.Message{ID: mid, RunID: rid, Role: "user", Text: text, Delivery: "delivered", ExternalKey: env.Key().MessageKey(env.Anchor), Position: len(s.Messages)})
+	var mid string
+	for i, input := range messages {
+		mid = uuid.NewString()
+		m := conversation.Message{ID: mid, RunID: rid, Role: "user", Text: input.Text, Delivery: "delivered", Position: len(s.Messages)}
+		if i == len(messages)-1 {
+			m.Metadata = testMetadata(env)
+			m.ExternalKey = env.Key().MessageKey(env.Anchor)
+		}
+		s.Messages = append(s.Messages, m)
+	}
 	if f.lost {
 		f.lost = false
 		return conversation.Accepted{}, errors.New("lost response")
@@ -119,8 +127,7 @@ func TestLostAdmissionRecoveredFromHistory(t *testing.T) {
 	if len(api.submitted) != 1 {
 		t.Fatal("duplicate agent run")
 	}
-	_, body, _ := strings.Cut(api.submitted[0].Text, "\n\n")
-	if !strings.Contains(body, "ORIGINAL_REQUEST_BODY") {
+	if !strings.Contains(joinedInput(api.submitted[0].Messages), "ORIGINAL_REQUEST_BODY") {
 		t.Fatal("user body truncated")
 	}
 }
@@ -230,7 +237,7 @@ func TestLostAdmissionWithEditedPostAndNewRevisionDoesNotResubmit(t *testing.T) 
 	if err := e.Thread(t.Context(), w, key, ch, true); err != nil {
 		t.Fatal(err)
 	}
-	if len(api.submitted) != 1 || !strings.Contains(api.submitted[0].Text, "ORIGINAL_REQUEST_BODY") {
+	if len(api.submitted) != 1 || !strings.Contains(joinedInput(api.submitted[0].Messages), "ORIGINAL_REQUEST_BODY") {
 		t.Fatal("accepted envelope replaced after restart")
 	}
 }
@@ -286,8 +293,7 @@ func TestUnacceptedClarificationRetargetsAfterSandboxLoss(t *testing.T) {
 	mm.posts = append(mm.posts, reply)
 	env := api.submitted[0].Envelope
 	env.Anchor, env.TriggerIDs, env.Kind = reply.ID, []string{reply.ID}, "clarification"
-	text, _ := env.Encode(reply.Message)
-	e.set(key, pending{Workflow: w, Envelope: env, Text: text, Session: old.ID, Run: old.Runs[0].ID})
+	e.set(key, pending{Workflow: w, Envelope: env, Messages: []conversation.InputMessage{{Text: reply.Message}}, Session: old.ID, Run: old.Runs[0].ID})
 	api.snapshot.Sessions[0].Runs[0].Status = "completed"
 	api.snapshot.Sessions[0].SandboxState = "unavailable"
 	if err := e.Thread(t.Context(), w, key, ch, true); err != nil {
@@ -520,12 +526,12 @@ type rejectedAPI struct {
 	calls int
 }
 
-func (a *rejectedAPI) Submit(ctx context.Context, w config.Workflow, e conversation.Envelope, text, sid, rid, pred string) (conversation.Accepted, error) {
+func (a *rejectedAPI) Submit(ctx context.Context, w config.Workflow, e conversation.Envelope, messages []conversation.InputMessage, sid, rid, pred string) (conversation.Accepted, error) {
 	a.calls++
 	if a.code != "" {
 		return conversation.Accepted{}, &orpheus.Error{Status: 422, Code: a.code}
 	}
-	return a.fakeAPI.Submit(ctx, w, e, text, sid, rid, pred)
+	return a.fakeAPI.Submit(ctx, w, e, messages, sid, rid, pred)
 }
 func TestValidationErrorIsDurablyRejected(t *testing.T) {
 	e, api, mm, _, key := fixture(t)

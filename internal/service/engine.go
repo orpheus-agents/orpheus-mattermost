@@ -23,7 +23,7 @@ import (
 type API interface {
 	Snapshot(context.Context, conversation.Key) (conversation.Snapshot, error)
 	Sessions(context.Context, string, string) ([]conversation.Session, error)
-	Submit(context.Context, config.Workflow, conversation.Envelope, string, string, string, string) (conversation.Accepted, error)
+	Submit(context.Context, config.Workflow, conversation.Envelope, []conversation.InputMessage, string, string, string) (conversation.Accepted, error)
 	Cancel(context.Context, string, string) error
 	Run(context.Context, string, string) (conversation.Run, error)
 	Watch(context.Context, string, func()) error
@@ -45,9 +45,10 @@ type Sandbox interface {
 }
 
 type pending struct {
-	Workflow                        config.Workflow
-	Envelope                        conversation.Envelope
-	Text, Session, Run, Predecessor string
+	Workflow                  config.Workflow
+	Envelope                  conversation.Envelope
+	Session, Run, Predecessor string
+	Messages                  []conversation.InputMessage
 }
 type Engine struct {
 	Config       config.Config
@@ -123,7 +124,10 @@ func (e *Engine) queued(key conversation.Key, count int) {
 func contract(s conversation.Session, r conversation.Run) (conversation.Envelope, error) {
 	for _, m := range s.Messages {
 		if m.RunID == r.ID && m.Role == "user" {
-			env, err := conversation.Decode(m.Text)
+			if !conversation.HasMetadata(m.Metadata) {
+				continue
+			}
+			env, err := conversation.Decode(m.Metadata)
 			if err != nil {
 				return env, err
 			}
@@ -276,7 +280,7 @@ func accepted(p pending, snapshot conversation.Snapshot) bool {
 			if m.Role != "user" {
 				continue
 			}
-			env, err := conversation.Decode(m.Text)
+			env, err := conversation.Decode(m.Metadata)
 			if err == nil && env.Anchor == p.Envelope.Anchor && env.Predecessor == p.Envelope.Predecessor {
 				return true
 			}
@@ -284,36 +288,52 @@ func accepted(p pending, snapshot conversation.Snapshot) bool {
 	}
 	return false
 }
-func transfer(snapshot conversation.Snapshot) (conversation.Envelope, string, string, bool) {
+func joinedInput(messages []conversation.InputMessage) string {
+	var out strings.Builder
+	for _, message := range messages {
+		out.WriteString(message.Text)
+	}
+	return out.String()
+}
+
+func transfer(snapshot conversation.Snapshot) (conversation.Envelope, []conversation.InputMessage, string, bool) {
 	descendants := map[string]bool{}
 	for _, s := range snapshot.Sessions {
 		for _, m := range s.Messages {
-			env, err := conversation.Decode(m.Text)
+			env, err := conversation.Decode(m.Metadata)
 			if err == nil {
 				descendants[env.Predecessor] = true
 			}
 		}
 	}
 	for _, s := range snapshot.Sessions {
-		for _, m := range s.Messages {
+		for index, m := range s.Messages {
 			if m.Role != "user" || m.Delivery != "rejected" || m.Error != "run_finished_before_delivery" || descendants[m.ID] {
 				continue
 			}
-			env, err := conversation.Decode(m.Text)
+			env, err := conversation.Decode(m.Metadata)
 			if err != nil || env.Kind != "clarification" {
 				continue
 			}
 			for _, r := range s.Runs {
-				if r.ID == m.RunID && r.Status == "completed" && r.StopReason != "token_limit" {
-					_, body, _ := strings.Cut(m.Text, "\n\n")
-					env.Kind = "initial"
-					env.Predecessor = m.ID
-					return env, body, m.ID, true
+				if r.ID != m.RunID || r.Status != "completed" || r.StopReason == "token_limit" {
+					continue
 				}
+				messages := []conversation.InputMessage{{Text: m.Text}}
+				for j := index - 1; j >= 0; j-- {
+					prior := s.Messages[j]
+					if prior.RunID != m.RunID || prior.Role != "user" || prior.Delivery != "rejected" || conversation.HasMetadata(prior.Metadata) {
+						break
+					}
+					messages = append([]conversation.InputMessage{{Text: prior.Text}}, messages...)
+				}
+				env.Kind = "initial"
+				env.Predecessor = m.ID
+				return env, messages, m.ID, true
 			}
 		}
 	}
-	return conversation.Envelope{}, "", "", false
+	return conversation.Envelope{}, nil, "", false
 }
 
 // Thread is called under exclusive thread ownership by the coordinator.
@@ -421,7 +441,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 	rejected := p.Rejected(w.EffectiveRevision)
 	posts := slices.DeleteFunc(slices.Clone(p.Posts), func(post mattermost.Post) bool { return rejected[post.ID] })
 	builder := conversation.Builder{Source: e.MM, Config: e.Config, Workflow: w, Bot: e.Bot}
-	env, text, buildErr := builder.Build(ctx, key, channel, posts, snapshot, initial, time.Now())
+	env, messages, buildErr := builder.BuildMessages(ctx, key, channel, posts, snapshot, initial, time.Now())
 	predecessor := ""
 	if latest != nil {
 		if last := latest.Latest(); last != nil {
@@ -432,7 +452,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 		if t, body, pred, ok := transfer(snapshot); ok {
 			env = t
 			env.Revision = w.EffectiveRevision
-			text, _ = env.Encode(body)
+			messages = body
 			predecessor = pred
 			buildErr = nil
 		}
@@ -451,7 +471,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 		return buildErr
 	}
 	if buildErr != nil {
-		return e.reject(ctx, p, env, text, "Сообщение превышает допустимый размер входа. Разделите запрос.")
+		return e.reject(ctx, p, env, messages, "Сообщение превышает допустимый размер входа. Разделите запрос.")
 	}
 	if run != nil {
 		// Without optional SDK access, keep the entire batch in Mattermost until
@@ -465,7 +485,10 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 				if message.Role != "user" || message.RunID != run.ID {
 					continue
 				}
-				old, err := conversation.Decode(message.Text)
+				if !conversation.HasMetadata(message.Metadata) {
+					continue
+				}
+				old, err := conversation.Decode(message.Metadata)
 				if err != nil {
 					return err
 				}
@@ -494,7 +517,10 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 				if m.Role != "user" || m.RunID != prior.ID || m.Delivery != "delivered" {
 					continue
 				}
-				old, err := conversation.Decode(m.Text)
+				if !conversation.HasMetadata(m.Metadata) {
+					continue
+				}
+				old, err := conversation.Decode(m.Metadata)
 				if err != nil {
 					return err
 				}
@@ -507,12 +533,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 	}
 	// The complete linked index is bounded by the transport budget; payload is
 	// frozen before the first POST, including the renderer and workflow revision.
-	_, body, _ := strings.Cut(text, "\n\n")
-	text, err = env.Encode(body)
-	if err != nil {
-		return err
-	}
-	frozen := pending{Workflow: w, Envelope: env, Text: text, Predecessor: predecessor}
+	frozen := pending{Workflow: w, Envelope: env, Messages: messages, Predecessor: predecessor}
 	if run != nil {
 		frozen.Session = current.ID
 		frozen.Run = run.ID
@@ -544,7 +565,7 @@ func (e *Engine) submit(ctx context.Context, key conversation.Key, p pending, cu
 			return err
 		}
 	}
-	_, err := e.API.Submit(ctx, p.Workflow, p.Envelope, p.Text, p.Session, p.Run, p.Predecessor)
+	_, err := e.API.Submit(ctx, p.Workflow, p.Envelope, p.Messages, p.Session, p.Run, p.Predecessor)
 	if err == nil {
 		e.clear(key)
 		if e.Notify != nil {
@@ -561,14 +582,15 @@ func (e *Engine) submit(ctx context.Context, key conversation.Key, p pending, cu
 		if readErr := publisher.Refresh(ctx); readErr != nil {
 			return readErr
 		}
-		if err = e.reject(ctx, publisher, p.Envelope, p.Text, "Запрос не принят Orpheus: "+code+". Исправьте запрос или конфигурацию."); err == nil {
+		if err = e.reject(ctx, publisher, p.Envelope, p.Messages, "Запрос не принят Orpheus: "+code+". Исправьте запрос или конфигурацию."); err == nil {
 			e.clear(key)
 		}
 		return err
 	}
 	return err
 }
-func (e *Engine) reject(ctx context.Context, p *delivery.Publisher, env conversation.Envelope, text, reason string) error {
+func (e *Engine) reject(ctx context.Context, p *delivery.Publisher, env conversation.Envelope, messages []conversation.InputMessage, reason string) error {
+	text := joinedInput(messages)
 	parts := delivery.Parts(p.Key, "", env.Anchor+":"+attachments.Hash([]byte(text)), "input_rejected", reason, env.Render, nil)
 	for _, part := range parts {
 		part.Receipt.TriggerIDs = env.TriggerIDs
