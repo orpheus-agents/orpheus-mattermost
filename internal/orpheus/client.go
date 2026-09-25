@@ -209,6 +209,9 @@ func (c *Client) History(ctx context.Context, id string) ([]conversation.Message
 			}
 			v := m.Message
 			out := conversation.Message{ID: v.ID.String(), RunID: v.RunID.String(), Role: string(v.Role), Kind: ptr(v.Kind), Text: v.Text, ExternalKey: ptr(v.ExternalKey), Delivery: ptr(v.DeliveryStatus), Position: -1, CreatedAt: v.CreatedAt}
+			if v.Metadata != nil {
+				out.Metadata = *v.Metadata
+			}
 			if v.Position != nil {
 				out.Position = v.Position.ItemIndex
 			}
@@ -250,15 +253,30 @@ func (c *Client) Snapshot(ctx context.Context, key conversation.Key) (conversati
 		if err != nil {
 			return conversation.Snapshot{}, err
 		}
+		pendingBatch := map[string]bool{}
 		for _, m := range s.Messages {
-			if m.Role == "user" {
-				e, err := conversation.Decode(m.Text)
-				if err != nil || e.Key() != key || m.ExternalKey != key.MessageKey(e.Anchor) {
+			if m.Role != "user" {
+				continue
+			}
+			if !conversation.HasMetadata(m.Metadata) {
+				if m.ExternalKey != "" {
 					return conversation.Snapshot{}, errors.New("foreign input in owned Orpheus session")
 				}
-				if s.Revision == "" {
-					s.Revision = e.Revision
-				}
+				pendingBatch[m.RunID] = true
+				continue
+			}
+			e, decodeErr := conversation.Decode(m.Metadata)
+			if decodeErr != nil || e.Key() != key || m.ExternalKey != key.MessageKey(e.Anchor) {
+				return conversation.Snapshot{}, errors.New("foreign input in owned Orpheus session")
+			}
+			pendingBatch[m.RunID] = false
+			if s.Revision == "" {
+				s.Revision = e.Revision
+			}
+		}
+		for _, open := range pendingBatch {
+			if open {
+				return conversation.Snapshot{}, errors.New("input batch lacks Mattermost metadata")
 			}
 		}
 	}
@@ -289,31 +307,63 @@ func (c *Client) env(w config.Workflow, e conversation.Envelope) (map[string]str
 func accepted(a api.Accepted) conversation.Accepted {
 	return conversation.Accepted{SessionID: a.SessionID.String(), RunID: a.RunID.String(), MessageID: a.MessageID.String()}
 }
-func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.Envelope, text, sessionID, runID, predecessor string) (conversation.Accepted, error) {
-	message := api.TextMessage{Text: text, ExternalKey: new(e.Key().MessageKey(e.Anchor))}
+
+func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.Envelope, messages []conversation.InputMessage, sessionID, runID, predecessor string) (conversation.Accepted, error) {
+	if len(messages) == 0 {
+		return conversation.Accepted{}, errors.New("empty Mattermost input batch")
+	}
+	input := make([]api.TextMessage, len(messages))
+	for i, message := range messages {
+		input[i] = api.TextMessage{Text: message.Text}
+	}
+	input[len(input)-1].ExternalKey = new(e.Key().MessageKey(e.Anchor))
+	metadata, err := json.Marshal(e)
+	if err != nil {
+		return conversation.Accepted{}, err
+	}
+	rawMetadata := json.RawMessage(metadata)
+	input[len(input)-1].Metadata = &rawMetadata
+	fingerprintInput, err := json.Marshal(struct {
+		Messages []api.TextMessage `json:"messages"`
+	}{input})
+	if err != nil {
+		return conversation.Accepted{}, err
+	}
+	fingerprint := "mm-v1:" + attachments.Hash(fingerprintInput)
 	env, err := c.env(w, e)
 	if err != nil {
 		return conversation.Accepted{}, err
 	}
 	envFrom := []string{w.Mattermost.TokenEnv}
-	var rawBody any
-	var key string
+	var request any
+	var sessionBody api.CreateSession
+	var runBody api.CreateRun
+	var messageBody api.SendMessage
+	var key, operation string
 	switch {
 	case runID != "":
-		rawBody = api.SendMessage{Message: message}
+		operation = "message"
 		key = e.Key().Operation(e.Anchor, "message", runID, predecessor)
+		messageBody = api.SendMessage{Messages: input}
+		request = messageBody
 	case sessionID != "":
-		rawBody = api.CreateRun{Message: message, Env: &env, EnvFrom: &envFrom, InputFingerprint: new("mm-v1:" + attachments.Hash([]byte(text)))}
+		operation = "run"
 		key = e.Key().Operation(e.Anchor, "run", sessionID, predecessor)
+		runBody = api.CreateRun{Messages: input, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
+		request = runBody
 	default:
+		operation = "session"
 		conf := api.ConfigurationInput{Agent: api.AgentInput{Profile: w.Profile, Instructions: new(w.Instructions)}, Sandbox: api.SandboxInput{Template: w.SandboxTemplate}, Limits: &api.LimitsInput{RunTimeoutSeconds: &w.RunTimeoutSeconds, MaxSessionTokens: &w.MaxSessionTokens}, Hooks: &api.HooksInput{BeforeRun: new(sandbox.BeforeRun()), AfterRun: new(sandbox.AfterRun()), TimeoutSeconds: &w.HookTimeoutSeconds}}
 		if len(w.EnvFrom) > 0 {
 			conf.Sandbox.EnvFrom = &w.EnvFrom
 		}
-		rawBody = api.CreateSession{Namespace: new(e.Key().Namespace()), ExternalKey: new(e.Key().External()), Configuration: conf, Message: message, Env: &env, EnvFrom: &envFrom, InputFingerprint: new("mm-v1:" + attachments.Hash([]byte(text)))}
+		namespace := e.Key().Namespace()
+		externalKey := e.Key().External()
+		sessionBody = api.CreateSession{Messages: input, Namespace: &namespace, ExternalKey: &externalKey, Configuration: conf, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
+		request = sessionBody
 		key = e.Key().Operation(e.Anchor, "session", e.Key().External(), predecessor)
 	}
-	b, err := json.Marshal(rawBody)
+	b, err := json.Marshal(request)
 	if err != nil {
 		return conversation.Accepted{}, err
 	}
@@ -321,25 +371,25 @@ func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.E
 		return conversation.Accepted{}, &Error{413, "request_too_large"}
 	}
 	var result api.Accepted
-	switch body := rawBody.(type) {
-	case api.CreateSession:
-		result, err = decode[api.Accepted](c.api.CreateSession(ctx, &api.CreateSessionParams{IdempotencyKey: &key}, body)) //nolint:bodyclose // decode owns and closes the response body.
-	case api.CreateRun:
-		sid, e := uuid.Parse(sessionID)
-		if e != nil {
-			return conversation.Accepted{}, e
+	switch operation {
+	case "session":
+		result, err = decode[api.Accepted](c.api.CreateSession(ctx, &api.CreateSessionParams{IdempotencyKey: &key}, sessionBody)) //nolint:bodyclose // decode owns and closes the response body.
+	case "run":
+		sid, parseErr := uuid.Parse(sessionID)
+		if parseErr != nil {
+			return conversation.Accepted{}, parseErr
 		}
-		result, err = decode[api.Accepted](c.api.CreateRun(ctx, sid, &api.CreateRunParams{IdempotencyKey: &key}, body)) //nolint:bodyclose // decode owns and closes the response body.
-	case api.SendMessage:
-		sid, e := uuid.Parse(sessionID)
-		if e != nil {
-			return conversation.Accepted{}, e
+		result, err = decode[api.Accepted](c.api.CreateRun(ctx, sid, &api.CreateRunParams{IdempotencyKey: &key}, runBody)) //nolint:bodyclose // decode owns and closes the response body.
+	case "message":
+		sid, parseErr := uuid.Parse(sessionID)
+		if parseErr != nil {
+			return conversation.Accepted{}, parseErr
 		}
-		rid, e := uuid.Parse(runID)
-		if e != nil {
-			return conversation.Accepted{}, e
+		rid, parseErr := uuid.Parse(runID)
+		if parseErr != nil {
+			return conversation.Accepted{}, parseErr
 		}
-		result, err = decode[api.Accepted](c.api.SendMessage(ctx, sid, rid, &api.SendMessageParams{IdempotencyKey: &key}, body)) //nolint:bodyclose // decode owns and closes the response body.
+		result, err = decode[api.Accepted](c.api.SendMessage(ctx, sid, rid, &api.SendMessageParams{IdempotencyKey: &key}, messageBody)) //nolint:bodyclose // decode owns and closes the response body.
 	}
 	return accepted(result), err
 }

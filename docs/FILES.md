@@ -68,7 +68,7 @@ clarification deltas and additional paging are outside the supported contract.
 A new run references the last run whose `before_run` completed successfully.
 A failed preparation that never created an index does not break future runs.
 Missing or corrupt pages of a confirmed index still fail preparation explicitly. Automatic reconstruction
-from Orpheus envelopes is outside the supported contract; the helper never presents
+from Orpheus message metadata is outside the supported contract; the helper never presents
 an incomplete index as complete. Restore the workspace metadata or start a new
 session to recover. Existing session files and the index chain are not trimmed.
 

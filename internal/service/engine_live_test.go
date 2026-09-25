@@ -121,11 +121,8 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 	first, file := addImage(false, root.ID)
 	env := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: w.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: first.ID, Kind: "initial", TriggerIDs: []string{first.ID}, Render: conversation.Render{Version: 1, MaxChars: w.MaxPostChars, Commentary: true}, Request: attachments.Request{Schema: 1, BotID: botID, SourceID: key.Source, ChannelID: key.Channel, RootID: key.Root, AnchorID: first.ID, Files: []attachments.InputFile{file}, Limits: w.Files}}
 	prompt := "Open the image using view_image at " + file.Path + ". Describe its color and shape in English. Write that description to report.txt in the current run outbox. Reply with the same description. Before the final answer, run a shell sleep for 20 seconds to allow a follow-up request. Do not use network APIs."
-	text, err := env.Encode(prompt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	accepted, err := api.Submit(ctx, w, env, text, "", "", "")
+	text := prompt
+	accepted, err := api.Submit(ctx, w, env, []conversation.InputMessage{{Text: "The image is already installed in the current run sandbox."}, {Text: "Use the prepared image path in the next request."}, {Text: text}}, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,8 +167,8 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 						if err := box.Prepare(ctx, s, r, w, follow.Request); err != nil {
 							t.Fatal("clarification preparation", err)
 						}
-						followText, _ := follow.Encode("Also open the additional image with view_image: " + extra.Path + ". Describe BOTH images' colors and shapes in English in report.txt and in your final answer. The first image remains at " + file.Path)
-						if _, err := api.Submit(ctx, w, follow, followText, s.ID, r.ID, r.ID); err != nil {
+						followText := "Also open the additional image with view_image: " + extra.Path + ". Describe BOTH images' colors and shapes in English in report.txt and in your final answer. The first image remains at " + file.Path
+						if _, err := api.Submit(ctx, w, follow, []conversation.InputMessage{{Text: "An additional image is now available in this run."}, {Text: "Keep the first image in the final comparison."}, {Text: followText}}, s.ID, r.ID, r.ID); err != nil {
 							t.Fatal(err)
 						}
 						clarified = true
@@ -217,7 +214,11 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 		if err := engine.publish(ctx, publisher, s, r); err != nil {
 			t.Fatal(err)
 		}
-		count := len(publisher.Posts)
+		firstPosts := make(map[string]bool, len(publisher.Posts))
+		for _, post := range publisher.Posts {
+			firstPosts[post.ID] = true
+		}
+		count := len(firstPosts)
 		// Reconstruct both objects: a restart must not rely on local receipts.
 		engine = &Engine{Config: cfg, MM: mm, API: api, Sandbox: box, Bot: mattermost.User{ID: botID}}
 		publisher = &delivery.Publisher{MM: mm, Key: key, BotID: botID}
@@ -227,8 +228,20 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 		if err := engine.publish(ctx, publisher, s, r); err != nil {
 			t.Fatal(err)
 		}
-		if len(publisher.Posts) != count {
-			t.Fatal("replay duplicated posts")
+		var added, missing []string
+		for _, post := range publisher.Posts {
+			if !firstPosts[post.ID] {
+				var receipt delivery.Receipt
+				_ = json.Unmarshal(post.Props[delivery.Property], &receipt)
+				added = append(added, post.ID+":"+receipt.RunID+":"+receipt.MessageID)
+			}
+			delete(firstPosts, post.ID)
+		}
+		for id := range firstPosts {
+			missing = append(missing, id)
+		}
+		if len(added) > 0 || len(missing) > 0 {
+			t.Fatalf("replay changed posts: before=%d after=%d added=%v missing=%v", count, len(publisher.Posts), added, missing)
 		}
 		found := false
 		for _, post := range publisher.Posts {
@@ -259,8 +272,8 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 	env.Request.Files = []attachments.InputFile{secondFile}
 	env.Request.PreviousIndex = attachments.IndexPath(run.ID)
 	env.Request.DeliveredBatches = []string{clarificationManifest}
-	text, _ = env.Encode("Open all three images with view_image: " + file.Path + ", " + clarificationPath + " and " + secondFile.Path + ". Describe each image's color and shape in English, identifying it by its path. Write the descriptions to report.txt in the current outbox and reply with the same descriptions. Before your final answer, run a shell sleep for 30 seconds to allow a worker restart. Do not use network APIs.")
-	next, err := api.Submit(ctx, w, env, text, session.ID, "", run.ID)
+	text = "Open all three images with view_image: " + file.Path + ", " + clarificationPath + " and " + secondFile.Path + ". Describe each image's color and shape in English, identifying it by its path. Write the descriptions to report.txt in the current outbox and reply with the same descriptions. Before your final answer, run a shell sleep for 30 seconds to allow a worker restart. Do not use network APIs."
+	next, err := api.Submit(ctx, w, env, []conversation.InputMessage{{Text: text}}, session.ID, "", run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +301,7 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	builder := conversation.Builder{Source: liveContextSource{mm}, Config: cfg, Workflow: w, Bot: mattermost.User{ID: botID, Username: "orpheus"}}
-	linkedEnv, body, err := builder.Build(ctx, key, channel, []mattermost.Post{trigger}, snapshot, false, time.Now().Add(w.MessageBatchWindow.Value()))
+	linkedEnv, linkedMessages, err := builder.BuildMessages(ctx, key, channel, []mattermost.Post{trigger}, snapshot, false, time.Now().Add(w.MessageBatchWindow.Value()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,12 +309,7 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 		t.Fatal("linked image was not included in the input request")
 	}
 	linkedEnv.Request.PreviousIndex = attachments.IndexPath(run.ID)
-	_, body, _ = strings.Cut(body, "\n\n")
-	text, err = linkedEnv.Encode(body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	next, err = api.Submit(ctx, w, linkedEnv, text, session.ID, "", run.ID)
+	next, err = api.Submit(ctx, w, linkedEnv, linkedMessages, session.ID, "", run.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

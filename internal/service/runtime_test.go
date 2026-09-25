@@ -30,7 +30,7 @@ func (*runtimeAPI) Sessions(context.Context, string, string) ([]conversation.Ses
 func (*runtimeAPI) Snapshot(context.Context, conversation.Key) (conversation.Snapshot, error) {
 	return conversation.Snapshot{}, nil
 }
-func (a *runtimeAPI) Submit(ctx context.Context, _ config.Workflow, _ conversation.Envelope, _, _, _, _ string) (conversation.Accepted, error) {
+func (a *runtimeAPI) Submit(ctx context.Context, _ config.Workflow, _ conversation.Envelope, _ []conversation.InputMessage, _, _, _ string) (conversation.Accepted, error) {
 	if a.count.Add(1) == 2 {
 		a.cancel()
 	}
@@ -219,7 +219,7 @@ func (*schedulerAPI) Watch(ctx context.Context, _ string, _ func()) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
-func (a *schedulerAPI) Submit(ctx context.Context, w config.Workflow, e conversation.Envelope, text, sid, rid, _ string) (conversation.Accepted, error) {
+func (a *schedulerAPI) Submit(ctx context.Context, w config.Workflow, e conversation.Envelope, messages []conversation.InputMessage, sid, rid, _ string) (conversation.Accepted, error) {
 	a.started <- e.Root
 	if e.Root == a.slow {
 		select {
@@ -239,7 +239,7 @@ func (a *schedulerAPI) Submit(ctx context.Context, w config.Workflow, e conversa
 	if rid == "" {
 		rid = uuid.NewString()
 	}
-	a.snapshots[e.Key()] = conversation.Snapshot{Sessions: []conversation.Session{{ID: sid, Revision: w.EffectiveRevision, MaxTokens: 1000000, Runs: []conversation.Run{{ID: rid, SessionID: sid, Status: "running"}}, Messages: []conversation.Message{{ID: uuid.NewString(), RunID: rid, Role: "user", Text: text, Delivery: "delivered"}}}}}
+	a.snapshots[e.Key()] = conversation.Snapshot{Sessions: []conversation.Session{{ID: sid, Revision: w.EffectiveRevision, MaxTokens: 1000000, Runs: []conversation.Run{{ID: rid, SessionID: sid, Status: "running"}}, Messages: []conversation.Message{{ID: uuid.NewString(), RunID: rid, Role: "user", Text: joinedInput(messages), Metadata: testMetadata(e), Delivery: "delivered"}}}}}
 	return conversation.Accepted{SessionID: sid, RunID: rid}, nil
 }
 func TestSlowThreadDoesNotBlockNewEventsOrRescanQuietHistory(t *testing.T) {

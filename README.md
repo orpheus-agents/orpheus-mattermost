@@ -1,6 +1,8 @@
 # Orpheus + Mattermost
 
-A Go connector for Mattermost and Orpheus `v0.1.2` or later. It routes thread messages,
+A Go connector for Mattermost. It requires Orpheus `v0.2.0` or newer for batched
+`messages` and `metadata` support.
+It routes thread messages,
 prepares conversation context and attachments, delivers clarifications to running
 agents, and publishes progress, answers, and output files.
 
@@ -8,6 +10,13 @@ The connector has no local database: Orpheus records accepted inputs and executi
 history, Mattermost stores source posts and delivery receipts, and AgentBox keeps
 workspace files. WebSocket and SSE events accelerate reconciliation; REST replay
 restores work after disconnects and restarts.
+
+The connector sends each rendered Mattermost post as a separate item in `messages`.
+Its durable input contract (accepted post IDs and versions, attachment manifest,
+and reply settings) is stored in the last item's `metadata`. Orpheus returns this
+object in message history and events but sends only each item's `text` to the agent.
+External keys identify the thread
+and anchor post; they do not replace the accepted input snapshot.
 
 ## Run
 
@@ -69,9 +78,6 @@ hadolint, dead code, unit/integration tests, the race detector, govulncheck, Tri
 and compilation. `smoke` validates configuration, readiness, and graceful SIGTERM
 using the production image and local mock dependencies.
 
-The Orpheus API client comes from the central Go module pinned to `v0.1.1`.
-The connector does not generate a separate client.
-
 ## CI and releases
 
 Pull requests and pushes to `main` run `make check` and `make smoke`.
@@ -100,9 +106,8 @@ the stock `codex` template, without requiring an Orpheus worker or model call.
 The agent test covers image recognition in the initial run, clarification,
 resumed run and linked thread, plus output-file delivery and publication replay
 with fresh connector objects. Memory resume requires a template rebuilt with
-envd `0.6.16` or later. Orpheus `v0.1.2` fixes polling for a hook result that has
-not been written yet; the generated API client remains pinned to `v0.1.1` because
-the API schema is unchanged.
+envd `0.6.16` or later. Orpheus `v0.2.0` includes the hook polling fix and the
+batched message API.
 
 See [acceptance testing](docs/TESTING.md) for worker crash injection, offline fault
 coverage and the 1,000-thread recovery workload. A passing local suite does not

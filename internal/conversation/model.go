@@ -13,8 +13,6 @@ import (
 	"github.com/orpheus-agents/orpheus-mattermost/internal/config"
 )
 
-const Header = "orpheus_mattermost_input "
-
 var operationNamespace = uuid.MustParse("1cd37086-3385-5b91-8925-e9f1fd9fe83d")
 
 type Key struct {
@@ -76,22 +74,14 @@ type Envelope struct {
 	Predecessor string              `json:"predecessor,omitempty"`
 }
 
-func (e Envelope) Key() Key { return Key{e.Source, e.Workflow, e.Channel, e.Root} }
-func (e Envelope) Encode(body string) (string, error) {
-	b, err := json.Marshal(e)
-	if err != nil {
-		return "", err
-	}
-	return Header + string(b) + "\n\n" + body, nil
-}
-func Decode(text string) (Envelope, error) {
+func (e Envelope) Key() Key                { return Key{e.Source, e.Workflow, e.Channel, e.Root} }
+func HasMetadata(raw json.RawMessage) bool { return len(raw) > 0 && string(raw) != "null" }
+func Decode(raw json.RawMessage) (Envelope, error) {
 	var e Envelope
-	line, _, _ := strings.Cut(text, "\n")
-	raw, ok := strings.CutPrefix(line, Header)
-	if !ok {
-		return e, errors.New("missing connector envelope")
+	if len(raw) == 0 {
+		return e, errors.New("missing connector metadata")
 	}
-	if err := json.Unmarshal([]byte(raw), &e); err != nil {
+	if err := json.Unmarshal(raw, &e); err != nil {
 		return e, errors.New("invalid connector envelope")
 	}
 	if e.Schema != 1 || e.Anchor == "" || (e.Render.Version != 1 && e.Render.Version != 2) || e.Render.MaxChars < 64 || len(e.TriggerIDs) == 0 || (e.Kind != "initial" && e.Kind != "clarification") {
@@ -106,6 +96,7 @@ type Message struct {
 	Role        string
 	Kind        string
 	Text        string
+	Metadata    json.RawMessage
 	ExternalKey string
 	Delivery    string
 	Error       string
@@ -180,7 +171,7 @@ func (s Snapshot) Known() (map[string]bool, map[string]bool) {
 			if m.Role != "user" {
 				continue
 			}
-			e, err := Decode(m.Text)
+			e, err := Decode(m.Metadata)
 			if err != nil {
 				continue
 			}

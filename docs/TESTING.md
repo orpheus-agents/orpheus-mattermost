@@ -6,7 +6,7 @@ must be run manually with the environment described in the README.
 
 ## External compatibility
 
-The validated combination is Mattermost 10.10.1 (REST API v4), Orpheus 0.1.2,
+The validated combination is Mattermost 10.10.1 (REST API v4), Orpheus 0.2.0,
 and the public AgentBox `codex` template rebuilt with envd 0.6.16 and Python 3.11.
 The test profile uses Codex with an image-capable model and `view_image`.
 Other templates and profiles need their own live checks.

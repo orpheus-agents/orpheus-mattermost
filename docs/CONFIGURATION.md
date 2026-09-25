@@ -69,6 +69,14 @@ setting; see [file limits and failure behavior](FILES.md).
 
 ## Workflow front matter
 
+Each accepted input is an ordered `messages` array in Orpheus. Each Mattermost post
+is a separate user message with YAML front matter and Markdown body. The last
+element's `metadata` contains the connector's input contract. It records the chosen trigger/context posts, their versions,
+file request and publication settings for restart recovery. The connector reads
+it from history and checks it against the session and message external keys.
+Changing either part changes the input fingerprint. Existing test sessions with
+the old text header are outside this version's recovery contract.
+
 Required fields are `id`, `revision`, `reconcile_from`, `profile`, and
 `sandbox_template`. Quote `revision` as a string. `reconcile_from` is a fixed UTC
 time in RFC3339, not a moving lookback window. When transferring channel ownership,
