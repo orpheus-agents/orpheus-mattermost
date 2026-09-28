@@ -112,6 +112,19 @@ func fixture(t *testing.T) (*Engine, *fakeAPI, *fakeSource, *fakeSandbox, conver
 	engine := &Engine{Config: cfg, MM: mm, API: api, Sandbox: box, Bot: mattermost.User{ID: mm.bot, Username: "orpheus"}}
 	return engine, api, mm, box, key
 }
+func TestZeroBatchWindowSubmitsImmediately(t *testing.T) {
+	e, api, mm, _, key := fixture(t)
+	// A server clock slightly ahead must not delay a zero-window request.
+	mm.posts[0].CreateAt = time.Now().Add(time.Second).UnixMilli()
+	w := e.Config.Workflows[0]
+	w.MessageBatchWindow = 0
+	if err := e.Thread(t.Context(), w, key, mattermost.Channel{ID: key.Channel, Type: "O"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.submitted) != 1 || api.submitted[0].Envelope.Anchor != key.Root {
+		t.Fatal("zero-window trigger was not submitted immediately")
+	}
+}
 func TestLostAdmissionRecoveredFromHistory(t *testing.T) {
 	e, api, _, _, key := fixture(t)
 	api.lost = true

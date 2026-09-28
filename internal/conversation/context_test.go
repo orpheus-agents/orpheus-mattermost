@@ -142,6 +142,7 @@ func firstPostFrontMatter(t *testing.T, text string) map[string]any {
 
 func TestBuildMessagesKeepsPostsSeparate(t *testing.T) {
 	b, key, source := builder(t)
+	b.Workflow.MessageBatchWindow = config.Duration(2 * time.Second)
 	first := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus first"}
 	second := mattermost.Post{ID: id(4), RootID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1100, Message: "@orpheus second"}
 	source.posts[first.ID], source.posts[second.ID] = first, second
@@ -162,6 +163,7 @@ func TestBuildMessagesKeepsPostsSeparate(t *testing.T) {
 
 func TestBuildMessagesLeavesThreadAfterLinkedContext(t *testing.T) {
 	b, key, source := builder(t)
+	b.Workflow.MessageBatchWindow = config.Duration(2 * time.Second)
 	linked := mattermost.Post{ID: id(100), ChannelID: key.Channel, UserID: id(3), CreateAt: 500, Message: "linked context"}
 	trigger := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus read https://chat.example.com/team/pl/" + linked.ID}
 	continuation := mattermost.Post{ID: id(4), RootID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1500, Message: "and also Y"}
@@ -177,6 +179,7 @@ func TestBuildMessagesLeavesThreadAfterLinkedContext(t *testing.T) {
 
 func TestBuildMessagesKeepsContinuationAfterTrigger(t *testing.T) {
 	b, key, source := builder(t)
+	b.Workflow.MessageBatchWindow = config.Duration(2 * time.Second)
 	trigger := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1000, Message: "@orpheus do X"}
 	continuation := mattermost.Post{ID: id(4), RootID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 1500, Message: "and also Y"}
 	source.posts[trigger.ID], source.posts[continuation.ID] = trigger, continuation
@@ -186,6 +189,20 @@ func TestBuildMessagesKeepsContinuationAfterTrigger(t *testing.T) {
 	}
 	if len(env.TriggerIDs) != 1 || env.TriggerIDs[0] != trigger.ID || len(messages) != 2 || messages[0].PostID != trigger.ID || messages[1].PostID != continuation.ID {
 		t.Fatalf("thread chronology changed: triggers=%v messages=%+v", env.TriggerIDs, messages)
+	}
+}
+
+func TestBuildMessagesZeroWindowStartsWithFirstTrigger(t *testing.T) {
+	b, key, source := builder(t)
+	first := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 2000, Message: "@orpheus first"}
+	second := mattermost.Post{ID: id(4), RootID: key.Root, ChannelID: key.Channel, UserID: id(3), CreateAt: 2100, Message: "@orpheus second"}
+	source.posts[first.ID], source.posts[second.ID] = first, second
+	env, messages, err := b.BuildMessages(t.Context(), key, mattermost.Channel{Type: "O"}, []mattermost.Post{first, second}, Snapshot{}, true, time.UnixMilli(1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Anchor != first.ID || env.WindowEnd != first.CreateAt || len(env.TriggerIDs) != 1 || env.TriggerIDs[0] != first.ID || len(messages) != 1 || messages[0].PostID != first.ID {
+		t.Fatalf("zero-window request was delayed or included a later post: envelope=%+v messages=%+v", env, messages)
 	}
 }
 
