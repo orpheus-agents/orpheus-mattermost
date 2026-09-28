@@ -1,5 +1,9 @@
 #!/bin/sh
 set -eu
+# Match the preStop command with the image's default non-root user and PATH.
+[ "$(docker image inspect -f '{{.Config.User}}' orpheus-mattermost:local)" = '65532:65532' ]
+docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+    --entrypoint sleep orpheus-mattermost:local 3
 smoke_prefix="orpheus-mm-smoke-$$"
 smoke_tmp=$(mktemp -d)
 cleanup() {
