@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
@@ -153,30 +152,8 @@ func (r *Runtime) Handler() http.Handler {
 	}
 	mux.HandleFunc("GET /readyz", ready)
 	mux.HandleFunc("GET /ready", ready)
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		r.metrics(w, "")
-	})
+	mux.Handle("GET /metrics", metricsHandler([]metricSource{{runtime: r}}, false))
 	return mux
-}
-func (r *Runtime) metrics(w io.Writer, source string) {
-	inputs, outputs, uncertain := r.Engine.queues()
-	labels := ""
-	if source != "" {
-		labels = fmt.Sprintf("{source=%q}", source)
-	}
-	metrics := map[string]any{
-		"pending_inputs": inputs, "pending_outputs": outputs, "uncertain_admission_age_seconds": uncertain.Seconds(),
-		"reconciliations_total": r.cycles.Load(), "errors_total": r.failures.Load(),
-		"reconnects_total": r.reconnects.Load(), "retries_total": r.retries.Load(),
-		"reconcile_duration_seconds_sum":   float64(r.cycleNanos.Load()) / 1e9,
-		"reconcile_duration_seconds_count": r.cycles.Load(),
-		"last_success_timestamp_seconds":   r.lastSuccess.Load(), "replay_lag_seconds": float64(r.replayLag.Load()) / 1e9,
-		"active_runs": r.activeRuns.Load(),
-	}
-	for name, value := range metrics {
-		_, _ = fmt.Fprintf(w, "orpheus_mattermost_%s%s %v\n", name, labels, value)
-	}
 }
 func reloadCompatible(a, b config.Config) bool {
 	return a.Orpheus == b.Orpheus && a.AgentBoxAPIURL == b.AgentBoxAPIURL && a.Listen == b.Listen && a.HTTPTimeout == b.HTTPTimeout && a.MaxRequestBytes == b.MaxRequestBytes

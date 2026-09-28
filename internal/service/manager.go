@@ -76,12 +76,11 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", health)
 	mux.HandleFunc("GET /ready", ready)
 	mux.HandleFunc("GET /readyz", ready)
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-		for _, c := range m.connections {
-			c.runtime.metrics(w, c.runtime.Engine.SourceID)
-		}
-	})
+	sources := make([]metricSource, 0, len(m.connections))
+	for _, c := range m.connections {
+		sources = append(sources, metricSource{runtime: c.runtime, source: c.runtime.Engine.SourceID})
+	}
+	mux.Handle("GET /metrics", metricsHandler(sources, true))
 	return mux
 }
 func (m *Manager) Run(ctx context.Context) error {

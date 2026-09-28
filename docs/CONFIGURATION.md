@@ -180,7 +180,7 @@ controllers. On restart, the connector reconciles all session generations and
 all accepted runs; there is no local database or persistent volume.
 
 `/health` (`/healthz`) checks the process; `/ready` (`/readyz`) reports the latest
-reconciliation. `/metrics` exposes reconciliation/error/reconnect/retry counters,
+reconciliation. `/metrics` exposes Go runtime and process metrics alongside reconciliation/error/reconnect/retry counters,
 duration, active runs, last success, replay lag, pending inputs/outputs, and age
 of the oldest uncertain admission. Queue gauges describe the last reconciliation,
 not an instantaneous Mattermost snapshot. JSON logs contain identifiers and error

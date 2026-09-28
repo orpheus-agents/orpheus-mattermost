@@ -84,6 +84,9 @@ func TestWorkflowConnectionsDiscoverIdentityAndKeepRoutesSeparate(t *testing.T) 
 	if strings.Count(rec.Body.String(), "orpheus_mattermost_pending_inputs{source=") != 2 {
 		t.Fatal("connection metrics missing")
 	}
+	if strings.Count(rec.Body.String(), "\ngo_goroutines ") != 1 {
+		t.Fatal("process runtime metrics must be emitted once per Pod")
+	}
 	// An API URL alone does not require credentials or enable sandbox access.
 	t.Setenv("AGENTBOX_API_KEY", "")
 	optional := cfg
