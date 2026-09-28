@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func example(t *testing.T, changes map[string]string) (Config, error) {
@@ -37,7 +38,7 @@ func TestExampleAndRouting(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if !strings.Contains(c.Workflows[0].Instructions, "view_image") || c.HTTPTimeout.Value().Seconds() != 30 {
+	if !strings.Contains(c.Workflows[0].Instructions, "view_image") || c.HTTPTimeout.Value().Seconds() != 30 || c.Workflows[0].MessageBatchWindow.Value() != 0 {
 		t.Fatal("workflow body or defaults missing")
 	}
 	w, e := c.Route("bbbbbbbbbbbbbbbbbbbbbbbbbb", "O")
@@ -55,6 +56,36 @@ func TestExampleAndRouting(t *testing.T) {
 	w, e = c.Route(special.IncludeIDs[0], "O")
 	if e != nil || w.ID != "special" {
 		t.Fatal(w, e)
+	}
+}
+func TestMessageBatchWindow(t *testing.T) {
+	base := workflowText(t)
+	for _, tc := range []struct {
+		name, value string
+		want        time.Duration
+		valid       bool
+	}{
+		{name: "bare zero", value: "0", valid: true},
+		{name: "duration zero", value: "0s", valid: true},
+		{name: "positive", value: "2s", want: 2 * time.Second, valid: true},
+		{name: "negative", value: "-1ms"},
+		{name: "submillisecond", value: "500us"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeWorkflow(t, dir, "assistant.md", strings.Replace(base, "---\n", "---\nmessage_batch_window: "+tc.value+"\n", 1))
+			cfg, err := example(t, map[string]string{"WORKFLOWS_DIR": dir})
+			if tc.valid {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := cfg.Workflows[0].MessageBatchWindow.Value(); got != tc.want {
+					t.Fatalf("window = %v; want %v", got, tc.want)
+				}
+			} else if err == nil {
+				t.Fatal("invalid batch window accepted")
+			}
+		})
 	}
 }
 func TestInvalidEnvironment(t *testing.T) {

@@ -258,9 +258,6 @@ func (c *Config) validate() error {
 		if w.SendCommentary == nil {
 			w.SendCommentary = new(true)
 		}
-		if w.MessageBatchWindow == 0 {
-			w.MessageBatchWindow = Duration(2 * time.Second)
-		}
 		if w.PollInterval == 0 {
 			w.PollInterval = Duration(30 * time.Second)
 		}
@@ -285,7 +282,7 @@ func (c *Config) validate() error {
 		if w.InitialContextTokens == 0 {
 			w.InitialContextTokens = 100000
 		}
-		if w.MessageBatchWindow.Value() < time.Millisecond || w.PollInterval.Value() < time.Second || w.FullReconcileInterval < w.PollInterval || w.MaxConcurrentRuns < 1 || w.RunTimeoutSeconds < 1 || w.HookTimeoutSeconds < 1 || w.MaxSessionTokens < 1 || w.MaxPostChars < 64 || w.MaxPostChars > 16383 || w.InitialContextTokens < 64 {
+		if (w.MessageBatchWindow != 0 && w.MessageBatchWindow.Value() < time.Millisecond) || w.PollInterval.Value() < time.Second || w.FullReconcileInterval < w.PollInterval || w.MaxConcurrentRuns < 1 || w.RunTimeoutSeconds < 1 || w.HookTimeoutSeconds < 1 || w.MaxSessionTokens < 1 || w.MaxPostChars < 64 || w.MaxPostChars > 16383 || w.InitialContextTokens < 64 {
 			return fmt.Errorf("workflow %s: invalid limits", w.ID)
 		}
 		if w.Files.MaxPerPost == 0 {

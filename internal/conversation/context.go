@@ -246,7 +246,7 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 	}
 	anchor := candidates[0]
 	end := anchor.CreateAt + b.Workflow.MessageBatchWindow.Value().Milliseconds()
-	if now.UnixMilli() < end {
+	if b.Workflow.MessageBatchWindow.Value() > 0 && now.UnixMilli() < end {
 		return Envelope{}, nil, nil
 	}
 	var triggers []mattermost.Post

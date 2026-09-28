@@ -103,7 +103,7 @@ changes rotate sessions after active work finishes. Link expansion and its chann
 | `trigger_bot_ids` | `[]` | Allow listed external bots/webhooks; the connector's bot is always excluded |
 | `send_commentary_messages` | `true` | Publish completed progress messages before the run finishes |
 | `draining` | `false` | Deliver accepted results without admitting new requests |
-| `message_batch_window` | `2s` | Window from the first unaccepted trigger |
+| `message_batch_window` | `0` | Window from the first unaccepted trigger; `0` starts it immediately, so later posts are outside that batch |
 | `poll_interval` | `30s` | Channel REST replay and known-thread reconciliation |
 | `full_reconcile_interval` | `5m` | Rediscover all sessions in each workflow namespace |
 | `max_concurrent_runs` | `10` | Active-run limit per workflow |
