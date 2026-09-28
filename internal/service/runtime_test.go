@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http/httptest"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -107,6 +108,12 @@ func TestQueueAndHealthMetrics(t *testing.T) {
 	runtime.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "orpheus_mattermost_pending_inputs 2\n") {
 		t.Fatal(rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "go_goroutines ") {
+		t.Fatal("Go runtime metrics missing")
+	}
+	if goruntime.GOOS == "linux" && !strings.Contains(rec.Body.String(), "process_cpu_seconds_total ") {
+		t.Fatal("process metrics missing")
 	}
 	inputs, _, uncertain := engine.queues()
 	if inputs != 2 || uncertain <= 0 {
