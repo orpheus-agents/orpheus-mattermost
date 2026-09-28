@@ -11,9 +11,13 @@ import (
 type source struct {
 	channel, post string
 	data          []byte
+	denied        bool
 }
 
 func (s source) Post(context.Context, string) (mattermost.Post, error) {
+	if s.denied {
+		return mattermost.Post{}, &mattermost.HTTPError{Status: 403}
+	}
 	return mattermost.Post{ID: s.post, ChannelID: s.channel, FileIDs: []string{"bbbbbbbbbbbbbbbbbbbbbbbbbb"}}, nil
 }
 func (s source) File(context.Context, string) (mattermost.FileInfo, error) {
@@ -29,7 +33,7 @@ func TestFetchChecksAssociationAccessAndLimits(t *testing.T) {
 	if err := req.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	src := source{id, id, []byte("png")}
+	src := source{channel: id, post: id, data: []byte("png")}
 	got, data := Fetch(t.Context(), src, req, file)
 	if got.Status != "ready" || got.SHA256 != Hash(data) {
 		t.Fatal(got)
@@ -43,14 +47,21 @@ func TestFetchChecksAssociationAccessAndLimits(t *testing.T) {
 	src.channel = "cccccccccccccccccccccccccc"
 	file.ChannelID = src.channel
 	got, _ = Fetch(t.Context(), src, req, file)
-	if got.Status != "unavailable" {
-		t.Fatal(got)
-	}
-	req.AllowedPairs = []config.ChannelPair{{Source: src.channel, Destination: id}}
-	got, _ = Fetch(t.Context(), src, req, file)
 	if got.Status != "ready" {
 		t.Fatal(got)
 	}
+	src.denied = true
+	got, _ = Fetch(t.Context(), src, req, file)
+	if got.Status != "unavailable" {
+		t.Fatal(got)
+	}
+	src.denied = false
+	file.ChannelID = id
+	got, _ = Fetch(t.Context(), src, req, file)
+	if got.Status != "unavailable" {
+		t.Fatal(got)
+	}
+	file.ChannelID = src.channel
 	src.post = fid
 	got, _ = Fetch(t.Context(), src, req, file)
 	if got.Status != "unavailable" {

@@ -14,23 +14,11 @@ type InputSource interface {
 	Download(context.Context, string, int64) ([]byte, error)
 }
 
-func allowed(r Request, ch string) bool {
-	if r.ChannelID == ch {
-		return true
-	}
-	for _, p := range r.AllowedPairs {
-		if p.Source == ch && p.Destination == r.ChannelID {
-			return true
-		}
-	}
-	return false
-}
-
 // Fetch validates current access and association before downloading. Per-file
 // failures remain explicit in the manifest; transport failures cannot become files.
 func inspectInput(ctx context.Context, source InputSource, r Request, f InputFile) (mattermost.FileInfo, int64, string) {
 	post, e := source.Post(ctx, f.PostID)
-	if e != nil || post.DeleteAt != 0 || post.ChannelID != f.ChannelID || !allowed(r, post.ChannelID) || !slices.Contains(post.FileIDs, f.FileID) {
+	if e != nil || post.DeleteAt != 0 || post.ChannelID != f.ChannelID || !slices.Contains(post.FileIDs, f.FileID) {
 		return mattermost.FileInfo{}, 0, "unavailable"
 	}
 	info, e := source.File(ctx, f.FileID)

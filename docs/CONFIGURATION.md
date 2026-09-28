@@ -91,7 +91,8 @@ starts a new session after the current run finishes. If an Orpheus profile or
 AgentBox template changes under the same name, increment `revision` explicitly.
 Channel routing, trigger selection, and batching/polling settings do not change
 revision. The embedded file-script hash is part of the effective revision; script
-changes rotate sessions after active work finishes. Link expansion and its channel-access policy remain semantic settings.
+changes rotate sessions after active work finishes. Link expansion remains a
+semantic setting.
 
 | Field | Default | Behavior |
 | --- | --- | --- |
@@ -153,21 +154,10 @@ published.
 
 The `link_expansion` mapping defaults to `enabled: true`, `max_links: 5`, and
 `max_posts: 20`. Only links to the same Mattermost installation are expanded.
-Same-channel links are allowed; cross-channel transfer requires a directional
-pair in `allowed_channel_pairs`:
-
-```yaml
-link_expansion:
-  allowed_channel_pairs:
-    - source: aaaaaaaaaaaaaaaaaaaaaaaaaa  # Linked channel.
-      destination: bbbbbbbbbbbbbbbbbbbbbbbbbb  # Requesting channel.
-```
-
-Bot access to a channel alone does not authorize copying its content. Selection
-includes the exact linked target, even far into a thread. Links within the current
-thread do not expand it again. Repeated files reuse a path keyed by file ID;
-missing or changed copies are restored. Linked images use the same local image
-viewing path as images in the main thread.
+Selection includes the exact linked target, even far into a thread. Links within
+the current thread do not expand it again. Repeated files reuse a path keyed by
+file ID; missing or changed copies are restored. Linked images use the same local
+image viewing path as images in the main thread.
 
 ## Reload and operation
 

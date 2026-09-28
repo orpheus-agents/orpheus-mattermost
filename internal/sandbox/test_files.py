@@ -120,12 +120,17 @@ class FilesTest(unittest.TestCase):
     def test_link_channel_and_post_association(self):
         self.source.channel = 'c' * 26
         self.req['files'][0]['channel_id'] = self.source.channel
-        self.assertEqual(self.store.prepare(self.source, self.req)['files'][0]['status'], 'unavailable')
-        self.req['anchor_post_id'] = 'd' * 26
-        self.req['allowed_channel_pairs'] = [dict(source=self.source.channel, destination=ID)]
         self.assertEqual(self.store.prepare(self.source, self.req)['files'][0]['status'], 'ready')
-        self.source.file_post = 'x' * 26
+        self.source.denied = True
+        self.req['anchor_post_id'] = 'd' * 26
+        self.assertEqual(self.store.prepare(self.source, self.req)['files'][0]['status'], 'unavailable')
+        self.source.denied = False
+        self.req['files'][0]['channel_id'] = ID
         self.req['anchor_post_id'] = 'e' * 26
+        self.assertEqual(self.store.prepare(self.source, self.req)['files'][0]['status'], 'unavailable')
+        self.req['files'][0]['channel_id'] = self.source.channel
+        self.source.file_post = 'x' * 26
+        self.req['anchor_post_id'] = 'f' * 26
         self.assertEqual(self.store.prepare(self.source, self.req)['files'][0]['status'], 'unavailable')
 
     def test_continuation_and_import_isolation(self):

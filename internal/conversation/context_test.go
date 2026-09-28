@@ -271,7 +271,7 @@ func TestSameThreadReferenceDeduplicatesFiles(t *testing.T) {
 		t.Fatal("duplicate context or attachment", s.threads, len(e.Request.Files))
 	}
 }
-func TestLinkedFarTargetAndChannelPolicy(t *testing.T) {
+func TestLinkedFarTargetAcrossChannels(t *testing.T) {
 	b, k, s := builder(t)
 	linkedRoot := id(100)
 	target := id(250)
@@ -291,12 +291,21 @@ func TestLinkedFarTargetAndChannelPolicy(t *testing.T) {
 	if e != nil || !strings.Contains(text, "body-250") || len(env.Request.Files) != 1 {
 		t.Fatal("linked target missing", e)
 	}
-	p.ChannelID = id(800)
-	s.posts[target] = p
+	for i := 100; i < 300; i++ {
+		linked := s.posts[id(i)]
+		linked.ChannelID = id(800)
+		s.posts[linked.ID] = linked
+	}
 	s.threads = 0
 	env, text, e = buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger}, Snapshot{}, true, time.Unix(10, 0))
-	if e != nil || strings.Contains(text, "body-250") || len(env.Request.Files) != 0 || s.threads != 0 {
-		t.Fatal("cross-channel context leaked", e)
+	if e != nil || !strings.Contains(text, "body-250") || len(env.Request.Files) != 1 || env.Request.Files[0].ChannelID != id(800) || s.threads != 1 {
+		t.Fatal("accessible cross-channel context missing", e)
+	}
+	delete(s.posts, target)
+	s.threads = 0
+	env, text, e = buildJoined(b, t.Context(), k, mattermost.Channel{Type: "O"}, []mattermost.Post{trigger}, Snapshot{}, true, time.Unix(10, 0))
+	if e != nil || !strings.Contains(text, "unavailable") || strings.Contains(text, "body-250") || len(env.Request.Files) != 0 || s.threads != 0 {
+		t.Fatal("inaccessible cross-channel context expanded", e)
 	}
 }
 func TestContextDoesNotConsumeTrigger(t *testing.T) {

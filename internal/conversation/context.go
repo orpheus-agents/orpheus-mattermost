@@ -294,7 +294,7 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 			for _, p := range triggers[:count] {
 				e.TriggerIDs = append(e.TriggerIDs, p.ID)
 			}
-			e.Request = attachments.Request{Schema: 1, BotID: b.Bot.ID, SourceID: key.Source, ChannelID: key.Channel, RootID: key.Root, AnchorID: anchor.ID, Limits: b.Workflow.Files, AllowedPairs: b.Workflow.Links.AllowedChannelPairs, Files: []attachments.InputFile{}}
+			e.Request = attachments.Request{Schema: 1, BotID: b.Bot.ID, SourceID: key.Source, ChannelID: key.Channel, RootID: key.Root, AnchorID: anchor.ID, Limits: b.Workflow.Files, Files: []attachments.InputFile{}}
 			seen := map[string]bool{}
 			fileSeen := map[string]bool{}
 			var messages []InputMessage
@@ -401,10 +401,6 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 					p, err := b.Source.Post(ctx, id)
 					if err != nil || p.DeleteAt != 0 {
 						appendMessage("", fmt.Sprintf("[Linked post %s: unavailable]\n", id))
-						continue
-					}
-					if !b.Workflow.AllowsLink(p.ChannelID, key.Channel) {
-						appendMessage("", fmt.Sprintf("[Linked post %s: source_not_allowed]\n", id))
 						continue
 					}
 					if p.ChannelID == key.Channel && p.Root() == key.Root {

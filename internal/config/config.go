@@ -43,15 +43,10 @@ type Files struct {
 	MaxOutputFiles int   `yaml:"max_output_files" json:"max_output_files"`
 	MaxOutputBytes int64 `yaml:"max_output_bytes" json:"max_output_bytes"`
 }
-type ChannelPair struct {
-	Source      string `yaml:"source" json:"source"`
-	Destination string `yaml:"destination" json:"destination"`
-}
 type Links struct {
-	Enabled             *bool         `yaml:"enabled"`
-	MaxLinks            int           `yaml:"max_links"`
-	MaxPosts            int           `yaml:"max_posts"`
-	AllowedChannelPairs []ChannelPair `yaml:"allowed_channel_pairs"`
+	Enabled  *bool `yaml:"enabled"`
+	MaxLinks int   `yaml:"max_links"`
+	MaxPosts int   `yaml:"max_posts"`
 }
 type Workflow struct {
 	Mattermost            Endpoint  `yaml:"mattermost"`
@@ -318,11 +313,6 @@ func (c *Config) validate() error {
 		if w.Links.MaxLinks < 1 || w.Links.MaxLinks > 5 || w.Links.MaxPosts < 2 || w.Links.MaxPosts > 20 {
 			return errors.New("invalid link expansion limits")
 		}
-		for _, pair := range w.Links.AllowedChannelPairs {
-			if !ValidID(pair.Source) || !ValidID(pair.Destination) {
-				return errors.New("invalid allowed channel pair")
-			}
-		}
 		// Runtime polling and drain switches do not invalidate a retained sandbox.
 		semantic := *w
 		semantic.Mattermost = Endpoint{}
@@ -386,9 +376,6 @@ func (c Config) Route(channelID, kind string) (*Workflow, error) {
 		selected = w
 	}
 	return selected, nil
-}
-func (w Workflow) AllowsLink(source, dest string) bool {
-	return source == dest || slices.Contains(w.Links.AllowedChannelPairs, ChannelPair{source, dest})
 }
 func Secret(name string) (string, error) {
 	value := os.Getenv(name)

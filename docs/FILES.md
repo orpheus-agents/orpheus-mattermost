@@ -72,7 +72,7 @@ from Orpheus message metadata is outside the supported contract; the helper neve
 an incomplete index as complete. Restore the workspace metadata or start a new
 session to recover. Existing session files and the index chain are not trimmed.
 
-`request.json` and its hash freeze the batch content, limits, and allowed channels.
+`request.json` and its hash freeze the batch content and limits.
 `previous_index` and `delivered_batches` belong to a specific run and are excluded
 from the batch hash. A prepared but undelivered clarification can therefore become
 the next run's input without conflicting with immutable batch files.
