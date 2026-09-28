@@ -28,17 +28,16 @@ type InputFile struct {
 	ChannelID string `json:"channel_id"`
 }
 type Request struct {
-	BotID            string               `json:"bot_id"`
-	Schema           int                  `json:"schema"`
-	SourceID         string               `json:"source_id"`
-	ChannelID        string               `json:"channel_id"`
-	RootID           string               `json:"root_id"`
-	AnchorID         string               `json:"anchor_post_id"`
-	Files            []InputFile          `json:"files"`
-	Limits           config.Files         `json:"limits"`
-	AllowedPairs     []config.ChannelPair `json:"allowed_channel_pairs,omitempty"`
-	PreviousIndex    string               `json:"previous_index,omitempty"`
-	DeliveredBatches []string             `json:"delivered_batches,omitempty"`
+	BotID            string       `json:"bot_id"`
+	Schema           int          `json:"schema"`
+	SourceID         string       `json:"source_id"`
+	ChannelID        string       `json:"channel_id"`
+	RootID           string       `json:"root_id"`
+	AnchorID         string       `json:"anchor_post_id"`
+	Files            []InputFile  `json:"files"`
+	Limits           config.Files `json:"limits"`
+	PreviousIndex    string       `json:"previous_index,omitempty"`
+	DeliveredBatches []string     `json:"delivered_batches,omitempty"`
 }
 type Manifest struct {
 	Schema      int         `json:"schema"`

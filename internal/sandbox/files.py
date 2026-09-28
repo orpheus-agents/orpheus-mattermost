@@ -407,10 +407,7 @@ def validate_output(output, export):
 def inspect_input(source, request, file):
     try:
         post = source.post(file['post_id'])
-        allowed = post['channel_id'] == request['channel_id'] or any(
-            pair['source'] == post['channel_id'] and pair['destination'] == request['channel_id']
-            for pair in request.get('allowed_channel_pairs', []))
-        require(not post.get('delete_at') and post['channel_id'] == file['channel_id'] and allowed
+        require(not post.get('delete_at') and post['channel_id'] == file['channel_id']
                 and file['file_id'] in (post.get('file_ids') or []), 'unavailable')
         info = source.file(file['file_id'])
         require(info['post_id'] == file['post_id'] and info['id'] == file['file_id'], 'unavailable')
