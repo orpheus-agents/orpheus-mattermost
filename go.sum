@@ -30,8 +30,8 @@ github.com/oapi-codegen/nullable v1.1.0 h1:eAh8JVc5430VtYVnq00Hrbpag9PFRGWLjxR1/
 github.com/oapi-codegen/nullable v1.1.0/go.mod h1:KUZ3vUzkmEKY90ksAmit2+5juDIhIZhfDl+0PwOQlFY=
 github.com/oapi-codegen/runtime v1.7.0 h1:t7358VYPvNbWJ9gdAkIK/smVeHpBf6yp8VTsaZsb/7k=
 github.com/oapi-codegen/runtime v1.7.0/go.mod h1:GwV7hC2hviaMzj+ITfHVRESK5J2W/GefVwIND/bMGvU=
-github.com/orpheus-agents/orpheus v0.2.4 h1:w2kLYsLBThz+GYlaV+Qnly4oJtz2YaopOSEt51HNFVs=
-github.com/orpheus-agents/orpheus v0.2.4/go.mod h1:HTz0Ol+PYj3KnqxcEpnzTnUFQdysFLS0AxJipcbr1Os=
+github.com/orpheus-agents/orpheus v0.3.0 h1:jJEyMr/mTbUndGac8CChRF+89rpgmAMTSj72AhaH6BY=
+github.com/orpheus-agents/orpheus v0.3.0/go.mod h1:HTz0Ol+PYj3KnqxcEpnzTnUFQdysFLS0AxJipcbr1Os=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/prometheus/client_golang v1.24.1 h1:JnJkREXzWxUdCuPFpIWZiPispT9xVV59uiuyR2bPlnU=

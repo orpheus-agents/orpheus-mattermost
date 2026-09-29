@@ -246,7 +246,7 @@ func (a *schedulerAPI) Submit(ctx context.Context, w config.Workflow, e conversa
 	if rid == "" {
 		rid = uuid.NewString()
 	}
-	a.snapshots[e.Key()] = conversation.Snapshot{Sessions: []conversation.Session{{ID: sid, Revision: w.EffectiveRevision, MaxTokens: 1000000, Runs: []conversation.Run{{ID: rid, SessionID: sid, Status: "running"}}, Messages: []conversation.Message{{ID: uuid.NewString(), RunID: rid, Role: "user", Text: joinedInput(messages), Metadata: testMetadata(e), Delivery: "delivered"}}}}}
+	a.snapshots[e.Key()] = conversation.Snapshot{Sessions: []conversation.Session{{ID: sid, AllowMultipleRuns: true, Revision: w.EffectiveRevision, MaxTokens: 1000000, Runs: []conversation.Run{{ID: rid, SessionID: sid, Status: "running"}}, Messages: []conversation.Message{{ID: uuid.NewString(), RunID: rid, Role: "user", Text: joinedInput(messages), Metadata: testMetadata(e), Delivery: "delivered"}}}}}
 	return conversation.Accepted{SessionID: sid, RunID: rid}, nil
 }
 func TestSlowThreadDoesNotBlockNewEventsOrRescanQuietHistory(t *testing.T) {

@@ -76,7 +76,7 @@ func TestReplayRecovery1000Threads(t *testing.T) {
 		env := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: w.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: key.Root, Kind: "initial", TriggerIDs: []string{key.Root}, Render: conversation.Render{Version: 2, MaxChars: 12000}}
 		body := "accepted request"
 		sid, rid, mid := uuid.NewString(), uuid.NewString(), uuid.NewString()
-		s := conversation.Session{ID: sid, ExternalKey: key.External(), Revision: w.EffectiveRevision, MaxTokens: 1000000,
+		s := conversation.Session{ID: sid, AllowMultipleRuns: true, ExternalKey: key.External(), Revision: w.EffectiveRevision, MaxTokens: 1000000,
 			Runs:     []conversation.Run{{ID: rid, SessionID: sid, Status: "completed", FinalMessageID: mid}},
 			Messages: []conversation.Message{{ID: uuid.NewString(), RunID: rid, Role: "user", Delivery: "delivered", Text: body, Metadata: testMetadata(env), ExternalKey: key.MessageKey(key.Root)}, {ID: mid, RunID: rid, Role: "assistant", Kind: "answer", Text: "recovered answer", Position: 1}}}
 		api.sessions = append(api.sessions, s)

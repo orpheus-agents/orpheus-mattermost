@@ -41,7 +41,7 @@ func TestPaginationBeyond200Items(t *testing.T) {
 					var item any
 					switch kind {
 					case "sessions":
-						item = map[string]any{"id": id, "namespace": "mattermost/assistant", "created_at": time.Unix(1, 0), "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 100}}}
+						item = map[string]any{"id": id, "allow_multiple_runs": i%2 == 0, "namespace": "mattermost/assistant", "created_at": time.Unix(1, 0), "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 100}}}
 					case "runs":
 						item = map[string]any{"id": id, "session_id": sid, "number": i + 1, "status": "completed"}
 					case "history":
@@ -65,7 +65,10 @@ func TestPaginationBeyond200Items(t *testing.T) {
 			case "sessions":
 				items, e := client.Sessions(t.Context(), "mattermost/assistant", "")
 				err = e
-				for _, item := range items {
+				for i, item := range items {
+					if item.AllowMultipleRuns != (i%2 == 0) {
+						t.Fatal("session run policy was not preserved", i, item.AllowMultipleRuns)
+					}
 					ids = append(ids, item.ID)
 				}
 			case "runs":
@@ -356,7 +359,8 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 			t.Run(operation+strconv.Itoa(len(refs)), func(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					var body struct {
-						Messages []struct {
+						AllowMultipleRuns *bool `json:"allow_multiple_runs"`
+						Messages          []struct {
 							Text     string         `json:"text"`
 							Metadata map[string]any `json:"metadata"`
 						} `json:"messages"`
@@ -374,11 +378,17 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 						t.Error("batch order, text or metadata changed")
 					}
 					if operation == "session" {
+						if body.AllowMultipleRuns == nil || !*body.AllowMultipleRuns {
+							t.Error("Mattermost sessions must allow subsequent runs")
+						}
 						if body.Configuration == nil || !slices.Equal(body.Configuration.Sandbox.EnvFrom, refs) {
 							t.Error("session environment references missing")
 						}
 					} else if body.Configuration != nil {
 						t.Error("session configuration sent with run or message")
+					}
+					if operation != "session" && body.AllowMultipleRuns != nil {
+						t.Error("session run policy sent with run or message")
 					}
 					if operation == "message" {
 						if len(body.EnvFrom) != 0 {

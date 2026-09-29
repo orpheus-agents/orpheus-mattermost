@@ -1,7 +1,6 @@
 # Orpheus + Mattermost
 
-A Go connector for Mattermost. It requires Orpheus `v0.2.0` or newer for batched
-`messages` and `metadata` support.
+A Go connector for Mattermost. It requires Orpheus `v0.3.0` or newer.
 It routes thread messages,
 prepares conversation context and attachments, delivers clarifications to running
 agents, and publishes progress, answers, and output files.

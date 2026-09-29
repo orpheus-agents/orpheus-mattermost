@@ -106,7 +106,7 @@ func (c *Client) Sessions(ctx context.Context, namespace, external string) ([]co
 			if ptr(s.Namespace) != namespace {
 				return nil, errors.New("orpheus namespace mismatch")
 			}
-			result = append(result, conversation.Session{ID: s.ID.String(), ExternalKey: ptr(s.ExternalKey), CreatedAt: s.CreatedAt, SandboxID: ptr(s.Sandbox.ID), SandboxState: string(s.Sandbox.State), SandboxLastState: ptr(s.Sandbox.LastKnownState), Workspace: ptr(s.Sandbox.Workspace), TotalTokens: s.Usage.TotalTokens, MaxTokens: s.Configuration.Limits.MaxSessionTokens})
+			result = append(result, conversation.Session{ID: s.ID.String(), AllowMultipleRuns: s.AllowMultipleRuns, ExternalKey: ptr(s.ExternalKey), CreatedAt: s.CreatedAt, SandboxID: ptr(s.Sandbox.ID), SandboxState: string(s.Sandbox.State), SandboxLastState: ptr(s.Sandbox.LastKnownState), Workspace: ptr(s.Sandbox.Workspace), TotalTokens: s.Usage.TotalTokens, MaxTokens: s.Configuration.Limits.MaxSessionTokens})
 		}
 		if p.NextCursor == nil {
 			break
@@ -359,7 +359,7 @@ func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.E
 		}
 		namespace := e.Key().Namespace()
 		externalKey := e.Key().External()
-		sessionBody = api.CreateSession{Messages: input, Namespace: &namespace, ExternalKey: &externalKey, Configuration: conf, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
+		sessionBody = api.CreateSession{AllowMultipleRuns: new(true), Messages: input, Namespace: &namespace, ExternalKey: &externalKey, Configuration: conf, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
 		request = sessionBody
 		key = e.Key().Operation(e.Anchor, "session", e.Key().External(), predecessor)
 	}

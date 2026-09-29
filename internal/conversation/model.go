@@ -130,18 +130,19 @@ func (r Run) Terminal() bool {
 }
 
 type Session struct {
-	ID               string
-	ExternalKey      string
-	CreatedAt        time.Time
-	SandboxID        string
-	SandboxState     string
-	SandboxLastState string
-	Workspace        string
-	TotalTokens      int64
-	MaxTokens        int64
-	Revision         string
-	Runs             []Run
-	Messages         []Message
+	ID                string
+	AllowMultipleRuns bool
+	ExternalKey       string
+	CreatedAt         time.Time
+	SandboxID         string
+	SandboxState      string
+	SandboxLastState  string
+	Workspace         string
+	TotalTokens       int64
+	MaxTokens         int64
+	Revision          string
+	Runs              []Run
+	Messages          []Message
 }
 
 func (s Session) Latest() *Run {
@@ -152,7 +153,7 @@ func (s Session) Latest() *Run {
 }
 func (s Session) Reusable(revision string) bool {
 	r := s.Latest()
-	return s.Revision == revision && s.SandboxState != "unavailable" && s.TotalTokens < s.MaxTokens && (r == nil || (r.Error != "sandbox_lost" && r.Error != "context_lost" && r.StopReason != "token_limit"))
+	return s.AllowMultipleRuns && s.Revision == revision && s.SandboxState != "unavailable" && s.TotalTokens < s.MaxTokens && (r == nil || (r.Error != "sandbox_lost" && r.Error != "context_lost" && r.StopReason != "token_limit"))
 }
 
 type Accepted struct {

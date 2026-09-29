@@ -33,7 +33,7 @@ func (f *fakeAPI) Submit(_ context.Context, w config.Workflow, env conversation.
 	f.submitted = append(f.submitted, pending{Workflow: w, Envelope: env, Messages: messages, Session: sid, Run: rid, Predecessor: pred})
 	if sid == "" {
 		sid = uuid.NewString()
-		f.snapshot.Sessions = append(f.snapshot.Sessions, conversation.Session{ID: sid, Revision: w.EffectiveRevision, MaxTokens: 1000000})
+		f.snapshot.Sessions = append(f.snapshot.Sessions, conversation.Session{ID: sid, AllowMultipleRuns: true, Revision: w.EffectiveRevision, MaxTokens: 1000000})
 	}
 	s := &f.snapshot.Sessions[len(f.snapshot.Sessions)-1]
 	if rid == "" {
@@ -274,6 +274,53 @@ func TestTerminalReplayPublishesOnceBeforeNextRun(t *testing.T) {
 		t.Fatal("replay duplicated work")
 	}
 }
+
+func TestThreadRespectsSessionRunPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, sandbox string
+		multiple              bool
+	}{
+		{name: "reusable", status: "completed", sandbox: "paused", multiple: true},
+		{name: "single_before_cleanup", status: "completed", sandbox: "ready"},
+		{name: "single_deleting", status: "completed", sandbox: "deleting"},
+		{name: "single_deleted", status: "completed", sandbox: "deleted"},
+		{name: "single_clarification", status: "running", sandbox: "ready"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, api, mm, _, key := fixture(t)
+			w := e.Config.Workflows[0]
+			ch := mattermost.Channel{ID: key.Channel, Type: "O"}
+			if err := e.Thread(t.Context(), w, key, ch, true); err != nil {
+				t.Fatal(err)
+			}
+			s := &api.snapshot.Sessions[0]
+			s.AllowMultipleRuns, s.SandboxState = tc.multiple, tc.sandbox
+			s.Runs[0].Status = tc.status
+			sid, rid := s.ID, s.Runs[0].ID
+			mm.posts = append(mm.posts, mattermost.Post{ID: "ssssssssssssssssssssssssss", RootID: key.Root, ChannelID: key.Channel, UserID: "hhhhhhhhhhhhhhhhhhhhhhhhhh", Message: "@orpheus follow-up question", CreateAt: 4000})
+			// Reconciliation after restart must use the policy read from history.
+			e = &Engine{Config: e.Config, MM: mm, API: api, Bot: e.Bot}
+			if err := e.Thread(t.Context(), w, key, ch, true); err != nil {
+				t.Fatal(err)
+			}
+			if len(api.submitted) != 2 {
+				t.Fatal("follow-up was not submitted", len(api.submitted))
+			}
+			got := api.submitted[1]
+			wantSession, wantRun := "", ""
+			if tc.multiple || tc.status == "running" {
+				wantSession = sid
+			}
+			if tc.status == "running" {
+				wantRun = rid
+			}
+			if got.Session != wantSession || got.Run != wantRun {
+				t.Fatalf("wrong follow-up target: session=%q run=%q, want session=%q run=%q", got.Session, got.Run, wantSession, wantRun)
+			}
+		})
+	}
+}
+
 func TestMissingExportHasDurableFailureReceipt(t *testing.T) {
 	e, api, mm, box, key := fixture(t)
 	w := e.Config.Workflows[0]
@@ -347,7 +394,7 @@ func TestEditedRejectedInputCanBeAdmitted(t *testing.T) {
 func TestPendingRunRebuildsAfterTokenExhaustion(t *testing.T) {
 	e, api, mm, _, key := fixture(t)
 	w := e.Config.Workflows[0]
-	old := conversation.Session{ID: uuid.NewString(), Revision: w.EffectiveRevision, MaxTokens: 100, TotalTokens: 100, SandboxState: "paused"}
+	old := conversation.Session{ID: uuid.NewString(), AllowMultipleRuns: true, Revision: w.EffectiveRevision, MaxTokens: 100, TotalTokens: 100, SandboxState: "paused"}
 	api.snapshot.Sessions = []conversation.Session{old}
 	e.set(key, pending{Workflow: w, Session: old.ID, Envelope: conversation.Envelope{Anchor: mm.posts[0].ID}})
 	if err := e.Thread(t.Context(), w, key, mattermost.Channel{ID: key.Channel, Type: "O"}, true); err != nil {
