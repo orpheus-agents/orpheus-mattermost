@@ -71,7 +71,7 @@ func TestConflictingGenerationsBlock(t *testing.T) {
 	}
 }
 func TestSessionRotationIsNotIdleBased(t *testing.T) {
-	s := conversation.Session{Revision: "v1", CreatedAt: time.Unix(0, 0), SandboxState: "paused", MaxTokens: 100, Runs: []conversation.Run{{Status: "completed"}}}
+	s := conversation.Session{AllowMultipleRuns: true, Revision: "v1", CreatedAt: time.Unix(0, 0), SandboxState: "paused", MaxTokens: 100, Runs: []conversation.Run{{Status: "completed"}}}
 	if !s.Reusable("v1") {
 		t.Fatal("idle session rotated")
 	}
