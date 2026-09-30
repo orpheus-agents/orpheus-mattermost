@@ -183,13 +183,15 @@ all accepted runs; there is no local database or persistent volume.
 
 `/health` (`/healthz`) checks the process; `/ready` (`/readyz`) reports the latest
 reconciliation. `/metrics` exposes Go runtime and process metrics alongside reconciliation/error/reconnect/retry counters,
-duration, active runs, last success, replay lag, pending inputs/outputs, and age
-of the oldest uncertain admission. Queue gauges describe the last reconciliation,
+duration, active runs, suspended threads (`orpheus_mattermost_suspended_threads`),
+last success, replay lag, pending inputs/outputs, and age of the oldest uncertain
+admission. Queue gauges describe the last reconciliation,
 not an instantaneous Mattermost snapshot. JSON logs contain identifiers and error
 classes, without message bodies or credentials.
 
 Permanent POST failures and receipt conflicts suspend retries for that thread;
-inspect the thread and settings before reloading to reset retries. Deleted bot
+run state remains observed, releasing capacity when no active run remains.
+Inspect the thread and settings before reloading to reset retries. Deleted bot
 answers may be recreated. Exactly-once delivery across Mattermost and Orpheus is
 not guaranteed: `pending_post_id` supplements durable receipts but has a short TTL.
 

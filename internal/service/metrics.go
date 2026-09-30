@@ -24,6 +24,7 @@ var connectorMetricNames = []string{
 	"reconciliations_total", "errors_total", "reconnects_total", "retries_total",
 	"reconcile_duration_seconds_sum", "reconcile_duration_seconds_count",
 	"last_success_timestamp_seconds", "replay_lag_seconds", "active_runs",
+	"suspended_threads",
 }
 
 func newConnectorMetrics(sources []metricSource, withSource bool) *connectorMetrics {
@@ -48,11 +49,20 @@ func (c *connectorMetrics) Collect(ch chan<- prometheus.Metric) {
 	for _, source := range c.sources {
 		r := source.runtime
 		inputs, outputs, uncertain := r.Engine.queues()
+		r.mu.Lock()
+		suspended := 0
+		for _, job := range r.jobs {
+			if job.Retry.Permanent {
+				suspended++
+			}
+		}
+		r.mu.Unlock()
 		values := [...]float64{
 			float64(inputs), float64(outputs), uncertain.Seconds(),
 			float64(r.cycles.Load()), float64(r.failures.Load()), float64(r.reconnects.Load()), float64(r.retries.Load()),
 			float64(r.cycleNanos.Load()) / 1e9, float64(r.cycles.Load()),
 			float64(r.lastSuccess.Load()), float64(r.replayLag.Load()) / 1e9, float64(r.activeRuns.Load()),
+			float64(suspended),
 		}
 		labels := []string(nil)
 		if c.withSource {
