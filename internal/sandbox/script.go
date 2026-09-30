@@ -31,15 +31,16 @@ source=zlib.decompress(base64.b64decode(%q))
 assert hashlib.sha256(source).hexdigest()==%q
 ns={"__name__":"mattermost_files"}
 exec(compile(source,%q,"exec"),ns)
-store=ns["Store"](os.environ["ORPHEUS_WORKSPACE_PATH"])
 try:
-    store.write(%q,source)
-finally:
-    store.close()
-try:
+    with ns["step"]("script_installation"):
+        store=ns["Store"](os.environ["ORPHEUS_WORKSPACE_PATH"])
+        try:
+            store.write(%q,source)
+        finally:
+            store.close()
     ns["main"](sys.argv[1])
-except Exception:
-    print("Mattermost file hook failed",file=sys.stderr)
+except Exception as error:
+    ns["report_failure"](error)
     sys.exit(1)
 `, base64.StdEncoding.EncodeToString(packed.Bytes()), Digest(), Path(), Path())
 })
@@ -50,12 +51,21 @@ func BeforeRun() string {
 
 // AfterRun verifies the installed bytes before executing the session's pinned code.
 func AfterRun() string {
-	code := fmt.Sprintf(`import hashlib,os,sys
-name=os.path.join(os.environ["ORPHEUS_WORKSPACE_PATH"],%q)
-with open(name,"rb") as stream:
-    source=stream.read(65537)
+	code := fmt.Sprintf(`import errno,hashlib,os,sys
+try:
+    name=os.path.join(os.environ["ORPHEUS_WORKSPACE_PATH"],%q)
+    with open(name,"rb") as stream:
+        source=stream.read(65537)
+except OSError as error:
+    kind=type(error).__name__
+    code=error.errno
+    label=errno.errorcode.get(code,"UNKNOWN")
+    print("Mattermost file hook failed: stage=script_loading; %%s: errno=%%s (%%s)" %% (kind,code,label),file=sys.stderr)
+    sys.exit(1)
+except KeyError:
+    sys.exit("Mattermost file hook failed: stage=script_loading; ORPHEUS_WORKSPACE_PATH is missing")
 if hashlib.sha256(source).hexdigest()!=%q:
-    sys.exit("Mattermost file script checksum mismatch")
+    sys.exit("Mattermost file hook failed: stage=script_integrity; script checksum mismatch")
 exec(compile(source,name,"exec"))
 `, Path(), Digest())
 	return "#!/bin/sh\nset -eu\nexec python3 -I -c '" + code + "' export-output\n"

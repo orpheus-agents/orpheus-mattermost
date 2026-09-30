@@ -1,23 +1,96 @@
 """Mattermost file hooks. Python 3 standard library only; no template installation."""
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
 import os
 import re
 import signal
+import socket
+import ssl
 import stat
 import sys
 import unicodedata
+import urllib.error
 import urllib.request
 import uuid
 
 BASE = '.orpheus/mattermost'
 
 
+class ProtocolError(ValueError):
+    """A fixed, developer-written validation message; never include input values."""
+
+
+class HookFailure(Exception):
+    def __init__(self, stage, cause):
+        super().__init__(stage)
+        self.stage, self.cause = stage, cause
+
+
+@contextlib.contextmanager
+def step(stage):
+    try:
+        yield
+    except HookFailure:
+        raise
+    except Exception as error:
+        raise HookFailure(stage, error) from None
+
+
+def safe_error(error):
+    # Never format arbitrary exception messages: they can contain URLs, tokens,
+    # server response bodies, workspace paths, or input file contents.
+    if isinstance(error, urllib.error.HTTPError):
+        code = error.code if type(error.code) is int else 'unknown'
+        return f'HTTPError: HTTP {code}'
+    if isinstance(error, urllib.error.URLError):
+        reason = error.reason
+        if isinstance(reason, OSError):
+            return 'URLError: ' + safe_error(reason)
+        return 'URLError: network request failed'
+    if isinstance(error, socket.gaierror):
+        code = error.errno if type(error.errno) is int else 'unknown'
+        return f'gaierror: errno={code}; DNS lookup failed'
+    if isinstance(error, ssl.SSLCertVerificationError):
+        return 'SSLCertVerificationError: TLS certificate verification failed'
+    if isinstance(error, ssl.SSLError):
+        return 'SSLError: TLS connection failed'
+    if isinstance(error, (TimeoutError, socket.timeout)):
+        return type_name(error) + ': operation timed out'
+    if isinstance(error, OSError):
+        code = error.errno
+        if type(code) is int:
+            return f'{type_name(error)}: errno={code} ({errno.errorcode.get(code, "UNKNOWN")})'
+        return type_name(error) + ': I/O operation failed'
+    if isinstance(error, ProtocolError):
+        return 'validation failed: ' + str(error)
+    if isinstance(error, json.JSONDecodeError):
+        return 'JSONDecodeError: invalid JSON'
+    if isinstance(error, KeyError):
+        return 'KeyError: required field or environment variable is missing'
+    for kind in (ValueError, TypeError, AttributeError, IndexError, RuntimeError):
+        if isinstance(error, kind):
+            return type_name(error) + ': invalid value or unexpected state'
+    return type_name(error) + ': unexpected failure'
+
+
+def type_name(error):
+    name = type(error).__name__
+    return name if re.fullmatch('[A-Za-z_][A-Za-z0-9_]{0,63}', name) else 'Exception'
+
+
+def report_failure(error):
+    stage, cause = 'unknown', error
+    if isinstance(error, HookFailure):
+        stage, cause = error.stage, error.cause
+    print(f'Mattermost file hook failed: stage={stage}; {safe_error(cause)}', file=sys.stderr)
+
+
 def require(ok, message):
     if not ok:
-        raise ValueError(message)
+        raise ProtocolError(message)
 
 
 def digest(data):
@@ -460,37 +533,48 @@ class Mattermost:
 
 
 def main(command):
-    store = Store(os.environ['ORPHEUS_WORKSPACE_PATH'])
+    with step('workspace_access'):
+        store = Store(os.environ['ORPHEUS_WORKSPACE_PATH'])
     try:
         if command == 'import-input':
-            timeout = float(os.environ.get('MM_IMPORT_TIMEOUT', '120'))
-            require(timeout > 0, 'invalid import timeout')
+            with step('import_configuration'):
+                timeout = float(os.environ.get('MM_IMPORT_TIMEOUT', '120'))
+                require(timeout > 0, 'invalid import timeout')
             def expired(_signum, _frame):
                 raise TimeoutError('import timed out')
             signal.signal(signal.SIGALRM, expired)
             signal.setitimer(signal.ITIMER_REAL, timeout)
             try:
-                store.import_input(sys.stdin.buffer)
+                with step('input_import'):
+                    store.import_input(sys.stdin.buffer)
             finally:
                 signal.setitimer(signal.ITIMER_REAL, 0)
             return
-        raw = os.environ['MM_INPUT_MANIFEST']
-        require(len(raw.encode()) <= 65536, 'input request exceeds ENV limit')
-        request = json.loads(raw)
-        validate_request(request)
-        source = Mattermost(os.environ['MM_BASE_URL'], os.environ[os.environ['MM_TOKEN_ENV']])
-        bot = json.loads(source.request('users/me'))
-        require(bot['id'] == os.environ['MM_EXPECTED_BOT_ID'], 'mattermost bot identity mismatch')
-        require(request['source_id'] == os.environ['MM_SOURCE_ID'] and
-                request['channel_id'] == os.environ['MM_CHANNEL_ID'], 'input request identity mismatch')
+        with step('input_request'):
+            raw = os.environ['MM_INPUT_MANIFEST']
+            require(len(raw.encode()) <= 65536, 'input request exceeds ENV limit')
+            request = json.loads(raw)
+            validate_request(request)
+        with step('mattermost_configuration'):
+            source = Mattermost(os.environ['MM_BASE_URL'], os.environ[os.environ['MM_TOKEN_ENV']])
+        with step('bot_verification'):
+            bot = json.loads(source.request('users/me'))
+            require(bot['id'] == os.environ['MM_EXPECTED_BOT_ID'], 'mattermost bot identity mismatch')
+        with step('input_identity'):
+            require(request['source_id'] == os.environ['MM_SOURCE_ID'] and
+                    request['channel_id'] == os.environ['MM_CHANNEL_ID'], 'input request identity mismatch')
         if command == 'prepare-input':
-            store.prepare(source, request)
-            store.begin_run(os.environ['ORPHEUS_RUN_ID'], request)
+            with step('input_preparation'):
+                store.prepare(source, request)
+            with step('run_initialization'):
+                store.begin_run(os.environ['ORPHEUS_RUN_ID'], request)
         elif command == 'export-output':
-            output = store.export_output(source, dict(source_id=request['source_id'], bot_id=bot['id'],
-                channel_id=request['channel_id'], session_id=os.environ['ORPHEUS_SESSION_ID'],
-                run_id=os.environ['ORPHEUS_RUN_ID'], limits=request['limits']))
-            print(encode(output).decode())
+            with step('output_export'):
+                output = store.export_output(source, dict(source_id=request['source_id'], bot_id=bot['id'],
+                    channel_id=request['channel_id'], session_id=os.environ['ORPHEUS_SESSION_ID'],
+                    run_id=os.environ['ORPHEUS_RUN_ID'], limits=request['limits']))
+            with step('output_result'):
+                print(encode(output).decode())
         else:
             raise ValueError('unknown file command')
     finally:
@@ -500,7 +584,6 @@ def main(command):
 if __name__ == '__main__':
     try:
         main(sys.argv[1])
-    except Exception:
-        # Do not expose credentials, HTTP bodies or file contents in hook logs.
-        print('Mattermost file hook failed', file=sys.stderr)
+    except Exception as error:
+        report_failure(error)
         sys.exit(1)

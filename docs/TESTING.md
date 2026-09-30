@@ -73,6 +73,7 @@ production SLA. Pagination is tested independently with HTTP fixtures containing
 | 32/33 clarification batches, optional SDK, before-run failure, finalizing and revoked scope | `service/reconcile_test.go`, `agentbox/access_test.go` |
 | HTTP backoff, Retry-After, permanent failures, capacity, reload and shutdown | `service/fault_test.go`, `service/runtime_test.go` |
 | Missing/corrupt input index, interrupted stream, output process crash, partial upload | `sandbox/test_files.py` |
+| Safe staged hook diagnostics, network/HTTP/OS failures, bounded clarification-import stderr and early process exit | `sandbox/test_diagnostics.py`, `sandbox/diagnostics_test.go`, `agentbox/access_test.go`, `agentbox/prepare_diagnostic_test.go` |
 | Same-thread references, far linked target, cross-channel links, bot/Markdown triggers and budgets | `conversation/context_test.go`, `config/config_test.go` |
 | Pagination, SSE cursor recovery, redirects and stream limits | `orpheus/client_test.go`, `mattermost/client_test.go` |
 

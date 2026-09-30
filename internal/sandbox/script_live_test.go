@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path"
 	"testing"
@@ -42,7 +43,7 @@ func TestLiveSandboxFileHooks(t *testing.T) {
 		t.Fatal("test bot guard", err)
 	}
 	run := conversation.Run{ID: uuid.NewString(), Status: "running"}
-	access, err := agentbox.New(config.Config{AgentBoxAPIURL: os.Getenv("AGENTBOX_API_URL")}, activeRun{run}, mm)
+	access, err := agentbox.New(config.Config{AgentBoxAPIURL: os.Getenv("AGENTBOX_API_URL")}, activeRun{run}, mm, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

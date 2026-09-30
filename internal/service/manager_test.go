@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orpheus-agents/orpheus-mattermost/internal/agentbox"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/config"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/mattermost"
 )
@@ -49,7 +51,8 @@ func TestWorkflowConnectionsDiscoverIdentityAndKeepRoutesSeparate(t *testing.T) 
 	second.ID = "second"
 	second.Mattermost.TokenEnv = "SECOND_BOT_TOKEN"
 	cfg.Workflows = append(cfg.Workflows, second)
-	manager := &Manager{Config: cfg, API: api}
+	logger := slog.New(slog.DiscardHandler)
+	manager := &Manager{Config: cfg, API: api, Logger: logger}
 	if err := manager.Init(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +61,10 @@ func TestWorkflowConnectionsDiscoverIdentityAndKeepRoutesSeparate(t *testing.T) 
 	}
 	for endpoint, c := range manager.connections {
 		got := c.runtime.Engine
+		access, ok := got.Sandbox.(*agentbox.Access)
+		if !ok || access.Logger != logger {
+			t.Fatal("manager logger not passed to sandbox access")
+		}
 		if got.SourceID != endpoint.Source(got.Bot.ID) || got.Config.Workflows[0].MaxPostChars != 4000 {
 			t.Fatal("identity/limits not discovered")
 		}

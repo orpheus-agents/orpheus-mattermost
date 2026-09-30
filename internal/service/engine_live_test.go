@@ -10,6 +10,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -64,7 +65,7 @@ func TestLiveOrpheusImagesAndOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	box, err := agentbox.New(cfg, api, mm)
+	box, err := agentbox.New(cfg, api, mm, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

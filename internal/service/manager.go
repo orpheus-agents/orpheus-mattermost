@@ -42,7 +42,7 @@ func (m *Manager) Init(ctx context.Context) error {
 		mm := mattermost.New(endpoint.BaseURL, token, cfg.HTTPTimeout.Value())
 		engine := &Engine{Config: cfg, MM: mm, API: m.API}
 		if os.Getenv("AGENTBOX_API_KEY") != "" {
-			sandbox, err := agentbox.New(cfg, m.API, mm)
+			sandbox, err := agentbox.New(cfg, m.API, mm, m.Logger)
 			if err != nil {
 				return err
 			}
