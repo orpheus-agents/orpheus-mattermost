@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -119,7 +120,7 @@ func TestInvalidFrontMatter(t *testing.T) {
 		"nested unknown":     strings.Replace(base, "mattermost:\n", "mattermost:\n  unknown: private-token\n", 1),
 		"duplicate":          strings.Replace(base, "---\n", "---\nid: private-token\n", 1),
 		"type":               strings.Replace(base, "---\n", "---\nfiles:\n  max_per_post: private-token\n", 1),
-		"limit":              strings.Replace(base, "---\n", "---\nfiles:\n  max_per_post: 6\n", 1),
+		"limit":              strings.Replace(base, "---\n", "---\nfiles:\n  max_per_post: 101\n", 1),
 		"duration":           strings.Replace(base, "---\n", "---\nmessage_batch_window: private-token\n", 1),
 		"cutover":            strings.Replace(base, "2026-09-23T00:00:00Z", "yesterday", 1),
 		"application config": strings.Replace(base, "---\n", "---\nlisten: ':8081'\n", 1),
@@ -135,6 +136,39 @@ func TestInvalidFrontMatter(t *testing.T) {
 				t.Fatal("secret leaked in error")
 			}
 		})
+	}
+}
+func TestFileCountLimits(t *testing.T) {
+	base := workflowText(t)
+	for _, field := range []string{"max_per_post", "max_output_files"} {
+		for _, value := range []int{-1, 0, 1, 5, 6, 20, 100, 101} {
+			t.Run(fmt.Sprintf("%s/%d", field, value), func(t *testing.T) {
+				dir := t.TempDir()
+				body := strings.Replace(base, "---\n", fmt.Sprintf("---\nfiles:\n  %s: %d\n", field, value), 1)
+				writeWorkflow(t, dir, "assistant.md", body)
+				cfg, err := example(t, map[string]string{"WORKFLOWS_DIR": dir})
+				if value < 0 || value > 100 {
+					if err == nil {
+						t.Fatal("invalid file count accepted")
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := cfg.Workflows[0].Files.MaxPerPost
+				if field == "max_output_files" {
+					got = cfg.Workflows[0].Files.MaxOutputFiles
+				}
+				want := value
+				if want == 0 {
+					want = 5
+				}
+				if got != want {
+					t.Fatalf("file count = %d; want %d", got, want)
+				}
+			})
+		}
 	}
 }
 func TestDirectoryAndAtomicReload(t *testing.T) {
