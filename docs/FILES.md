@@ -8,6 +8,18 @@ leaving stdin available for file records. Different script versions coexist.
 There is no connector-specific template installation or runtime package download.
 The full hook body counts toward the Orpheus API request size limit.
 
+Failed hooks write their stage and a safe reason to stderr, visible in Orpheus
+hook output. For example: `stage=bot_verification; HTTPError: HTTP 401`.
+Diagnostics distinguish configuration, JSON, identity, DNS, TLS, timeout,
+filesystem, preparation, import, and export failures. They include HTTP status,
+OS error codes, and fixed protocol validation messages; they exclude credentials,
+URLs, paths, HTTP bodies, file contents, and tracebacks. Hooks still exit with code
+`1` and Orpheus records `hook_failed`.
+SDK clarification imports use the same format. Because they are not Orpheus hooks,
+the connector accepts one bounded diagnostic line of that exact format and writes
+it to its structured log with workflow, session and run identifiers when the
+import process fails. Other stderr is discarded.
+
 Workspace files live under `.orpheus/mattermost/`:
 
 | Path | Purpose |
