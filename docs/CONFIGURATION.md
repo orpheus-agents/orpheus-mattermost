@@ -146,6 +146,8 @@ The `files` mapping has these defaults:
 | `max_output_files` | `5` |
 | `max_output_bytes` | `31457280` |
 
+`max_per_post` and `max_output_files` accept values from 1 to 100.
+The Mattermost server must support the configured number of attachments per post.
 `max_batch_bytes` cannot exceed 100 MiB. SDK import sends file metadata and raw
 bytes sequentially; memory use is bounded by one file rather than the whole batch.
 `max_output_bytes` applies to each outgoing file. Input errors and exceeded limits

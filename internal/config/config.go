@@ -298,7 +298,7 @@ func (c *Config) validate() error {
 		if w.Files.MaxOutputBytes == 0 {
 			w.Files.MaxOutputBytes = 30 << 20
 		}
-		if w.Files.MaxPerPost < 1 || w.Files.MaxPerPost > 5 || w.Files.MaxOutputFiles < 1 || w.Files.MaxOutputFiles > 5 || w.Files.MaxFileBytes < 1 || w.Files.MaxImageBytes < 1 || w.Files.MaxBatchBytes < 1 || w.Files.MaxBatchBytes > 100<<20 || w.Files.MaxOutputBytes < 1 {
+		if w.Files.MaxPerPost < 1 || w.Files.MaxPerPost > 100 || w.Files.MaxOutputFiles < 1 || w.Files.MaxOutputFiles > 100 || w.Files.MaxFileBytes < 1 || w.Files.MaxImageBytes < 1 || w.Files.MaxBatchBytes < 1 || w.Files.MaxBatchBytes > 100<<20 || w.Files.MaxOutputBytes < 1 {
 			return errors.New("invalid attachment limits")
 		}
 		if w.Links.Enabled == nil {

@@ -117,6 +117,36 @@ class FilesTest(unittest.TestCase):
         self.req['anchor_post_id'] = 'e' * 26
         self.assertEqual(self.store.prepare(self.source, self.req)['files'][0]['status'], 'file_limit_exceeded')
 
+    def test_twenty_input_files_and_overflow(self):
+        ids = [f'{i:026d}' for i in range(21)]
+        original = self.req['files'][0]
+        self.req['files'] = [dict(original, file_id=file_id,
+                                 path=f'{f.BASE}/input/files/{file_id}/image.png')
+                             for file_id in ids]
+        self.req['limits']['max_per_post'] = 20
+        self.source.post = lambda _id: dict(id=ID, channel_id=ID, file_ids=ids)
+        self.source.file = lambda file_id: dict(id=file_id, post_id=ID,
+                                                mime_type='image/png', size=3)
+        result = self.store.prepare(self.source, self.req)
+        self.assertEqual([file['status'] for file in result['files']],
+                         ['ready'] * 20 + ['file_limit_exceeded'])
+        self.assertEqual(self.source.downloads, 20)
+
+    def test_twenty_output_files_and_overflow(self):
+        self.req['limits']['max_output_files'] = 20
+        for i in range(20):
+            self.outbox(f'{i:02d}.txt')
+        result = self.store.export_output(self.source, self.export())
+        self.assertEqual(len(result['files']), 20)
+        self.assertEqual(len(self.source.uploads), 20)
+        self.run = str(uuid.uuid4())
+        self.source.uploads.clear()
+        for i in range(21):
+            self.outbox(f'{i:02d}.txt')
+        with self.assertRaisesRegex(ValueError, 'output file count exceeded'):
+            self.store.export_output(self.source, self.export())
+        self.assertEqual(self.source.uploads, [])
+
     def test_link_channel_and_post_association(self):
         self.source.channel = 'c' * 26
         self.req['files'][0]['channel_id'] = self.source.channel
