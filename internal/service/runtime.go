@@ -24,7 +24,7 @@ import (
 type retry struct {
 	At        time.Time
 	Failures  int
-	Permanent bool
+	Permanent bool // Stop reconciliation, but keep observing run capacity.
 }
 type scheduled struct {
 	Cancel                       context.CancelFunc
@@ -280,7 +280,8 @@ func (r *Runtime) Run(ctx context.Context) error {
 		// Ordered dispatch prevents a noisy thread from monopolizing the worker pool.
 		keys := make([]conversation.Key, 0, len(r.jobs))
 		for key, j := range r.jobs {
-			if !j.Working && !j.Retry.Permanent && !time.Now().Before(j.Retry.At) && (j.Dirty || !time.Now().Before(j.Next)) {
+			poll := !j.Retry.Permanent || r.active[key] > 0
+			if !j.Working && !time.Now().Before(j.Retry.At) && (j.Dirty || poll && !time.Now().Before(j.Next)) {
 				keys = append(keys, key)
 			}
 		}
@@ -346,10 +347,15 @@ func (r *Runtime) reserve(key conversation.Key, w config.Workflow) bool {
 
 func (r *Runtime) work(ctx, watchCtx context.Context, wg *sync.WaitGroup, key conversation.Key, w config.Workflow, ch mattermost.Channel, inScope bool) {
 	started := time.Now()
+	r.mu.Lock()
+	permanent := r.jobs[key].Retry.Permanent
+	r.mu.Unlock()
 	snapshot, err := r.Engine.API.Snapshot(ctx, key)
 	if err == nil {
 		r.observe(watchCtx, wg, key, snapshot)
-		err = r.Engine.reconcile(ctx, w, key, ch, inScope, snapshot)
+		if !permanent {
+			err = r.Engine.reconcile(ctx, w, key, ch, inScope, snapshot)
+		}
 	}
 	r.cycleNanos.Add(int64(time.Since(started)))
 	r.cycles.Add(1)
@@ -370,7 +376,7 @@ func (r *Runtime) work(ctx, watchCtx context.Context, wg *sync.WaitGroup, key co
 		delay += time.Duration(rand.Int64N(int64(delay/2) + 1))
 		if mm, ok := errors.AsType[*mattermost.HTTPError](err); ok {
 			delay = max(delay, mm.RetryAfter)
-			j.Retry.Permanent = mm.Status == 400 || mm.Status == 404 || mm.Status == 413
+			j.Retry.Permanent = j.Retry.Permanent || mm.Status == 400 || mm.Status == 404 || mm.Status == 413
 		}
 		if errors.Is(err, delivery.ErrConflict) || orpheus.Code(err) == "idempotency_conflict" {
 			j.Retry.Permanent = true
@@ -378,13 +384,13 @@ func (r *Runtime) work(ctx, watchCtx context.Context, wg *sync.WaitGroup, key co
 		j.Retry.At = time.Now().Add(delay)
 		j.Dirty = true
 	} else if err == nil {
-		j.Retry = retry{}
+		j.Retry = retry{Permanent: j.Retry.Permanent}
 		r.lastSuccess.Store(time.Now().Unix())
 		r.Engine.mu.Lock()
 		pending := r.Engine.inputQueue[key] > 0
 		_, frozen := r.Engine.pending[key]
 		r.Engine.mu.Unlock()
-		if !j.Dirty && !pending && !frozen && r.active[key] == 0 {
+		if !j.Retry.Permanent && !j.Dirty && !pending && !frozen && r.active[key] == 0 {
 			delete(r.jobs, key)
 		}
 	}
