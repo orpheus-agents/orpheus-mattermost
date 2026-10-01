@@ -20,6 +20,8 @@ workspace files. WebSocket and SSE events accelerate reconciliation; REST replay
 restores work after disconnects and restarts.
 
 The connector sends each rendered Mattermost post as a separate item in `messages`.
+Its [front matter](docs/CONFIGURATION.md#message-context) includes the author's
+Mattermost email and the post's channel ID and name, including linked threads.
 Its durable input contract (accepted post IDs and versions, attachment manifest,
 and reply settings) is stored in the last item's `metadata`. Orpheus returns this
 object in message history and events but sends only each item's `text` to the agent.

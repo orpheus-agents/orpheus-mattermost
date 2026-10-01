@@ -49,6 +49,7 @@ type Channel struct {
 type User struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
+	Email    string `json:"email"`
 	Nickname string `json:"nickname"`
 	IsBot    bool   `json:"is_bot"`
 	DeleteAt int64  `json:"delete_at"`

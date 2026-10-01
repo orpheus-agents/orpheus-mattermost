@@ -15,6 +15,14 @@ func TestDecodeMetadataContract(t *testing.T) {
 	if err != nil || got.Anchor != e.Anchor || got.Render != e.Render {
 		t.Fatalf("metadata lost: %+v %v", got, err)
 	}
+	for version := -1; version <= renderVersion+1; version++ {
+		e.Render.Version = version
+		_, err := Decode(json.RawMessage(mustJSON(e)))
+		valid := version >= 1 && version <= renderVersion
+		if (err == nil) != valid {
+			t.Fatalf("render version %d: valid=%v err=%v", version, valid, err)
+		}
+	}
 	for _, raw := range []json.RawMessage{nil, []byte("null"), []byte("[]"), []byte(`{"schema":1}`)} {
 		if _, err := Decode(raw); err == nil {
 			t.Fatalf("invalid metadata accepted: %s", raw)

@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -81,6 +82,7 @@ type ContextSource interface {
 	Post(context.Context, string) (mattermost.Post, error)
 	Thread(context.Context, string) ([]mattermost.Post, error)
 	User(context.Context, string) (mattermost.User, error)
+	Channel(context.Context, string) (mattermost.Channel, error)
 	Files(context.Context, string) ([]mattermost.FileInfo, error)
 }
 type Builder struct {
@@ -88,6 +90,18 @@ type Builder struct {
 	Config   config.Config
 	Workflow config.Workflow
 	Bot      mattermost.User
+}
+
+type postAuthor struct {
+	ID       string `json:"id"`
+	Username string `json:"username,omitempty"`
+	Nickname string `json:"nickname,omitempty"`
+	Email    string `json:"email,omitempty"`
+}
+
+type postChannel struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
 }
 
 type fileReference struct {
@@ -256,6 +270,25 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 		}
 	}
 	fileCache := map[string][]mattermost.FileInfo{}
+	// Cache unavailable names too, including across request-budget retries.
+	channels := map[string]mattermost.Channel{key.Channel: channel}
+	channelFor := func(id string) (mattermost.Channel, error) {
+		if ch, ok := channels[id]; ok {
+			return ch, nil
+		}
+		ch, err := b.Source.Channel(ctx, id)
+		if err != nil {
+			if ctx.Err() != nil {
+				return mattermost.Channel{}, ctx.Err()
+			}
+			if status := mattermost.Status(err); status != 403 && status != 404 {
+				return mattermost.Channel{}, err
+			}
+			ch = mattermost.Channel{}
+		}
+		channels[id] = ch
+		return ch, nil
+	}
 	filesFor := func(id string) ([]mattermost.FileInfo, error) {
 		if files, ok := fileCache[id]; ok {
 			return files, nil
@@ -290,7 +323,7 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 				}
 			}
 			chosen := initialContext(eligible, mandatory, key.Root, budget)
-			e := Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: b.Workflow.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: anchor.ID, WindowEnd: cutoff, Kind: "initial", Render: Render{2, b.Workflow.MaxPostChars, *b.Workflow.SendCommentary}}
+			e := Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: b.Workflow.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: anchor.ID, WindowEnd: cutoff, Kind: "initial", Render: Render{renderVersion, b.Workflow.MaxPostChars, *b.Workflow.SendCommentary}}
 			for _, p := range triggers[:count] {
 				e.TriggerIDs = append(e.TriggerIDs, p.ID)
 			}
@@ -358,9 +391,17 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 					}
 				}
 				var out strings.Builder
-				author, _ := json.Marshal(map[string]any{"id": p.UserID, "username": u.Username, "nickname": u.Nickname})
-				fmt.Fprintf(&out, "---\nkind: %s\npost_id: %s\nroot_id: %s\nchannel_id: %s\nauthor: %s\ncreated_at: %s\n", origin, p.ID, p.Root(), p.ChannelID, author, time.UnixMilli(p.CreateAt).UTC().Format(time.RFC3339Nano))
-				if raw := p.Props["attachments"]; len(raw) > 0 && origin != "thread_reference" {
+				ch, err := channelFor(p.ChannelID)
+				if err != nil {
+					return err
+				}
+				author := postAuthor{ID: p.UserID, Username: u.Username, Nickname: u.Nickname}
+				if !u.IsBot && p.Props["from_webhook"] == nil {
+					author.Email = u.Email
+				}
+				channelInfo := postChannel{ID: p.ChannelID, Name: ch.Name}
+				fmt.Fprintf(&out, "---\nkind: %s\npost_id: %s\nroot_id: %s\nchannel: %s\nauthor: %s\ncreated_at: %s\n", origin, p.ID, p.Root(), mustJSON(channelInfo), mustJSON(author), time.UnixMilli(p.CreateAt).UTC().Format(time.RFC3339Nano))
+				if raw := p.Props["attachments"]; len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) && origin != "thread_reference" {
 					fmt.Fprintf(&out, "structured_data: %s\n", mustJSON(map[string]json.RawMessage{"attachments": raw}))
 				}
 				if len(postFiles) > 0 {
