@@ -67,8 +67,12 @@ func TestTriggerPolicy(t *testing.T) {
 func id(n int) string { return fmt.Sprintf("%026d", n) }
 
 type contextSource struct {
-	posts   map[string]mattermost.Post
-	threads int
+	posts         map[string]mattermost.Post
+	threads       int
+	users         map[string]mattermost.User
+	channels      map[string]mattermost.Channel
+	channelCalls  map[string]int
+	channelErrors map[string]error
 }
 
 func (s *contextSource) Post(_ context.Context, id string) (mattermost.Post, error) {
@@ -91,7 +95,20 @@ func (s *contextSource) Thread(_ context.Context, id string) ([]mattermost.Post,
 	return out, nil
 }
 func (s *contextSource) User(_ context.Context, id string) (mattermost.User, error) {
+	if user, ok := s.users[id]; ok {
+		return user, nil
+	}
 	return mattermost.User{ID: id, Username: "human"}, nil
+}
+func (s *contextSource) Channel(_ context.Context, id string) (mattermost.Channel, error) {
+	s.channelCalls[id]++
+	if err := s.channelErrors[id]; err != nil {
+		return mattermost.Channel{}, err
+	}
+	if channel, ok := s.channels[id]; ok {
+		return channel, nil
+	}
+	return mattermost.Channel{}, &mattermost.HTTPError{Status: 403}
 }
 func (s *contextSource) Files(_ context.Context, post string) ([]mattermost.FileInfo, error) {
 	var out []mattermost.FileInfo
@@ -109,7 +126,7 @@ func builder(t *testing.T) (Builder, Key, *contextSource) {
 		t.Fatal(e)
 	}
 	c.Workflows[0].Since = time.Unix(0, 0)
-	s := &contextSource{posts: map[string]mattermost.Post{}}
+	s := &contextSource{posts: map[string]mattermost.Post{}, users: map[string]mattermost.User{}, channels: map[string]mattermost.Channel{}, channelCalls: map[string]int{}, channelErrors: map[string]error{}}
 	key := Key{"chat", "assistant", id(1), id(2)}
 	return Builder{Source: s, Config: c, Workflow: c.Workflows[0], Bot: mattermost.User{ID: id(9), Username: "orpheus"}}, key, s
 }

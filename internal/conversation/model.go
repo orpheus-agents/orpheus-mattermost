@@ -15,6 +15,8 @@ import (
 
 var operationNamespace = uuid.MustParse("1cd37086-3385-5b91-8925-e9f1fd9fe83d")
 
+const renderVersion = 3
+
 type Key struct {
 	Source   string
 	Workflow string
@@ -84,7 +86,7 @@ func Decode(raw json.RawMessage) (Envelope, error) {
 	if err := json.Unmarshal(raw, &e); err != nil {
 		return e, errors.New("invalid connector envelope")
 	}
-	if e.Schema != 1 || e.Anchor == "" || (e.Render.Version != 1 && e.Render.Version != 2) || e.Render.MaxChars < 64 || len(e.TriggerIDs) == 0 || (e.Kind != "initial" && e.Kind != "clarification") {
+	if e.Schema != 1 || e.Anchor == "" || e.Render.Version < 1 || e.Render.Version > renderVersion || e.Render.MaxChars < 64 || len(e.TriggerIDs) == 0 || (e.Kind != "initial" && e.Kind != "clarification") {
 		return e, errors.New("invalid input contract")
 	}
 	return e, nil

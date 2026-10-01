@@ -61,12 +61,13 @@ type fakeSource struct {
 	MM
 	posts []mattermost.Post
 	bot   string
+	email string
 	calls int
 }
 
 func (f *fakeSource) Thread(context.Context, string) ([]mattermost.Post, error) { return f.posts, nil }
 func (f *fakeSource) User(_ context.Context, id string) (mattermost.User, error) {
-	return mattermost.User{ID: id, Username: "human"}, nil
+	return mattermost.User{ID: id, Username: "human", Email: f.email}, nil
 }
 func (f *fakeSource) Files(_ context.Context, id string) ([]mattermost.FileInfo, error) {
 	var files []mattermost.FileInfo
@@ -163,7 +164,8 @@ func TestClarificationPreparesWithoutNewRun(t *testing.T) {
 func TestAcceptedClarificationStatesSurviveRestart(t *testing.T) {
 	e, api, mm, _, key := fixture(t)
 	w := e.Config.Workflows[0]
-	ch := mattermost.Channel{ID: key.Channel, Type: "O"}
+	mm.email = "original@example.com"
+	ch := mattermost.Channel{ID: key.Channel, Type: "O", Name: "original-channel"}
 	if err := e.Thread(t.Context(), w, key, ch, true); err != nil {
 		t.Fatal(err)
 	}
@@ -172,6 +174,11 @@ func TestAcceptedClarificationStatesSurviveRestart(t *testing.T) {
 	if err := e.Thread(t.Context(), w, key, ch, true); err == nil {
 		t.Fatal("expected lost clarification response")
 	}
+	acceptedText := api.snapshot.Sessions[0].Messages[1].Text
+	if !strings.Contains(acceptedText, "original@example.com") || !strings.Contains(acceptedText, "original-channel") {
+		t.Fatal("accepted clarification missing original identity")
+	}
+	mm.email, ch.Name = "changed@example.com", "renamed-channel"
 	for _, status := range []string{"pending", "sending", "uncertain", "delivered"} {
 		api.snapshot.Sessions[0].Messages[1].Delivery = status
 		e = &Engine{Config: e.Config, MM: mm, API: api, Bot: e.Bot}
@@ -196,6 +203,9 @@ func TestAcceptedClarificationStatesSurviveRestart(t *testing.T) {
 	}
 	if len(api.submitted) != 3 || len(api.snapshot.Sessions[0].Runs) != 2 || api.submitted[2].Envelope.Predecessor != predecessor {
 		t.Fatal("rejected clarification was not transferred exactly once")
+	}
+	if got := api.submitted[2].Messages; len(got) != 1 || got[0].Text != acceptedText {
+		t.Fatalf("transfer changed accepted identity: %+v", got)
 	}
 }
 func TestScopeRevocationCancelsAndSuppressesDelivery(t *testing.T) {

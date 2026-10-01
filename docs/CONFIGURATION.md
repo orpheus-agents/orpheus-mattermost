@@ -67,15 +67,55 @@ A run accepts at most 32 clarification batches containing files. Further file
 batches wait intact for the next run. This fixed limit needs no ENV or workflow
 setting; see [file limits and failure behavior](FILES.md).
 
-## Workflow front matter
+## Message context
 
 Each accepted input is an ordered `messages` array in Orpheus. Each Mattermost post
 is a separate user message with YAML front matter and Markdown body. The last
 element's `metadata` contains the connector's input contract. It records the chosen trigger/context posts, their versions,
 file request and publication settings for restart recovery. The connector reads
 it from history and checks it against the session and message external keys.
-Changing either part changes the input fingerprint. Existing test sessions with
-the old text header are outside this version's recovery contract.
+Changing either part changes the input fingerprint. Accepted messages retain their
+saved text during recovery, even if a user's profile or channel name has changed.
+
+Each post starts with front matter like this:
+
+```yaml
+---
+kind: thread
+post_id: post-id
+root_id: root-id
+channel: {"id":"channel-id","name":"dev-test-group"}
+author: {"id":"user-id","username":"alice","nickname":"Alice","email":"alice@example.com"}
+created_at: 2026-10-01T07:00:00Z
+---
+```
+
+`author.email` comes from the Mattermost user API, never from the post body.
+It is omitted for bot and webhook posts: their profiles do not identify a human
+requester. `channel.name` is Mattermost's `name` field (`dev-test-group` in
+`~dev-test-group`), not its display title. Direct and group messages use generated
+names (user IDs joined with `__` or a hash), not readable slugs.
+Linked posts carry their own author's email and channel. Empty or unavailable
+optional fields (including email, nickname, username, and channel name) are omitted,
+not rendered as `null`. The channel ID remains present. Channel lookup 403/404
+omits the name; other errors abort submission so reconciliation can retry.
+These fields describe each post and do not enforce access to external tools.
+The text field `channel_id` is replaced by `channel`; internal metadata, attachment
+manifests, external keys, and `MM_CHANNEL_ID` keep their existing contracts.
+
+For email-based tools, the connector's token must be able to read other users'
+email addresses. For an ordinary bot this requires Mattermost's
+[`PrivacySettings.ShowEmailAddress`](https://docs.mattermost.com/administration-guide/configure/site-configuration-settings#show-email-address)
+to be enabled (the default). Privileged accounts may still see email when it is
+disabled. Check `GET /api/v4/users/{human-user-id}` with the connector token before
+deployment; do not infer availability from the bot's own profile. If email is
+absent, the agent must not guess the schedule owner.
+
+New inputs use renderer version 3. After accepting them, do not roll back to a
+connector that only recognizes versions 1–2: it can treat those triggers as new
+and submit duplicate runs. Roll forward with a fix that recognizes version 3.
+
+## Workflow front matter
 
 Required fields are `id`, `revision`, `reconcile_from`, `profile`, and
 `sandbox_template`. Quote `revision` as a string. `reconcile_from` is a fixed UTC

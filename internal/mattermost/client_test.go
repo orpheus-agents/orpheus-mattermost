@@ -12,6 +12,29 @@ import (
 	"github.com/coder/websocket"
 )
 
+func TestUserEmail(t *testing.T) {
+	for _, tc := range []struct{ name, body, email string }{
+		{"present", `{"id":"user","username":"alice","email":"alice@example.com"}`, "alice@example.com"},
+		{"hidden", `{"id":"user","username":"alice"}`, ""},
+		{"empty", `{"id":"user","username":"alice","email":""}`, ""},
+		{"null", `{"id":"user","username":"alice","email":null}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet || r.URL.Path != "/api/v4/users/user" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			user, err := New(server.URL, "token", time.Second).User(t.Context(), "user")
+			if err != nil || user.ID != "user" || user.Email != tc.email {
+				t.Fatalf("user=%+v err=%v", user, err)
+			}
+		})
+	}
+}
+
 func TestThreadPaginationRequiresTimestamp(t *testing.T) {
 	calls := 0
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
