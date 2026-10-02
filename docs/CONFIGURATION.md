@@ -111,9 +111,15 @@ disabled. Check `GET /api/v4/users/{human-user-id}` with the connector token bef
 deployment; do not infer availability from the bot's own profile. If email is
 absent, the agent must not guess the schedule owner.
 
-New inputs use renderer version 3. After accepting them, do not roll back to a
-connector that only recognizes versions 1–2: it can treat those triggers as new
-and submit duplicate runs. Roll forward with a fix that recognizes version 3.
+New inputs use renderer version 4. After accepting them, do not roll back to a
+connector that only recognizes versions 1–3: it can treat those triggers as new
+and submit duplicate runs. Roll forward with a fix that recognizes version 4.
+
+For new runs, failure notices include the error message returned by Orpheus as a
+Markdown quote after `Run failed (<code>).` Multiline messages keep every line
+inside the quote. Empty messages add no quote. Cancelled runs and token-limit
+notices retain their own wording. Runs accepted with an earlier renderer retain
+their original notice text so replay does not conflict with existing receipts.
 
 ## Workflow front matter
 

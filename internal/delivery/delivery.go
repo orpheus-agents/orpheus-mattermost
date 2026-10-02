@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"unicode"
 
 	"github.com/orpheus-agents/orpheus-mattermost/internal/attachments"
@@ -331,7 +332,7 @@ func Parts(key conversation.Key, sid, rid, mid, text string, render conversation
 	}
 	return result
 }
-func Failure(r conversation.Run) string {
+func Failure(r conversation.Run, render conversation.Render) string {
 	if r.StopReason == "token_limit" {
 		return "Token limit reached. Start a new thread to continue."
 	}
@@ -339,7 +340,14 @@ func Failure(r conversation.Run) string {
 		return "Run cancelled."
 	}
 	if r.Status == "failed" {
-		return fmt.Sprintf("Run failed (%s).", r.Error)
+		text := fmt.Sprintf("Run failed (%s).", r.Error)
+		// Persisted render versions keep already published receipts deterministic.
+		if message := strings.TrimSpace(r.ErrorMessage); render.Version >= 4 && message != "" {
+			message = strings.ReplaceAll(message, "\r\n", "\n")
+			message = strings.ReplaceAll(message, "\r", "\n")
+			text += "\n\n> " + strings.ReplaceAll(message, "\n", "\n> ")
+		}
+		return text
 	}
 	return ""
 }
