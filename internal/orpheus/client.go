@@ -150,6 +150,7 @@ func run(r api.Run) conversation.Run {
 	v := conversation.Run{ID: r.ID.String(), SessionID: r.SessionID.String(), Number: r.Number, Status: string(r.Status), Observation: ptr(r.Observation), AgentStatus: ptr(r.AgentStatus), StopReason: ptr(r.StopReason), CreatedAt: r.CreatedAt, FinishedAt: r.FinishedAt, DeadlineAt: r.DeadlineAt}
 	if r.Error != nil {
 		v.Error = r.Error.Code
+		v.ErrorMessage = r.Error.Message
 	}
 	if r.FinalMessage != nil {
 		v.FinalMessageID = r.FinalMessage.ID.String()

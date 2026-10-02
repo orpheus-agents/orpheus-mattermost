@@ -249,7 +249,7 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 		}
 		hasAnswer = true
 	}
-	if text := delivery.Failure(r); text != "" {
+	if text := delivery.Failure(r, env.Render); text != "" {
 		return send("run_status", text, nil)
 	}
 	if !hasAnswer && !stopped {
