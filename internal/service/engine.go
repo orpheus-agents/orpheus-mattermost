@@ -577,7 +577,8 @@ func (e *Engine) submit(ctx context.Context, key conversation.Key, p pending, cu
 		// Keep the frozen input until history proves whether it was accepted.
 		return nil
 	}
-	if code := orpheus.Code(err); code == "request_too_large" || code == "environment_too_large" || code == "validation_error" {
+	switch code := orpheus.Code(err); code {
+	case "request_too_large", "environment_too_large", "validation_error", "unknown_profile", "unknown_template", "unknown_service":
 		publisher := &delivery.Publisher{MM: e.MM, Key: key, BotID: e.Bot.ID}
 		if readErr := publisher.Refresh(ctx); readErr != nil {
 			return readErr
@@ -591,7 +592,10 @@ func (e *Engine) submit(ctx context.Context, key conversation.Key, p pending, cu
 }
 func (e *Engine) reject(ctx context.Context, p *delivery.Publisher, env conversation.Envelope, messages []conversation.InputMessage, reason string) error {
 	text := joinedInput(messages)
-	parts := delivery.Parts(p.Key, "", env.Anchor+":"+attachments.Hash([]byte(text)), "input_rejected", reason, env.Render, nil)
+	inputHash := attachments.Hash([]byte(text))
+	// Each configuration attempt owns its receipt, including a different rejection.
+	identity, _ := json.Marshal([3]string{env.Revision, reason, inputHash})
+	parts := delivery.Parts(p.Key, "", env.Anchor+":"+attachments.Hash(identity), "input_rejected", reason, env.Render, nil)
 	for _, part := range parts {
 		part.Receipt.TriggerIDs = env.TriggerIDs
 		for _, v := range env.Versions {
@@ -599,7 +603,7 @@ func (e *Engine) reject(ctx context.Context, p *delivery.Publisher, env conversa
 				part.Receipt.InputVersions = append(part.Receipt.InputVersions, v)
 			}
 		}
-		part.Receipt.InputHash = attachments.Hash([]byte(text))
+		part.Receipt.InputHash = inputHash
 		part.Receipt.Revision = env.Revision
 		if err := p.Publish(ctx, part); err != nil {
 			return err

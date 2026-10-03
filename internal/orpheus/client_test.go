@@ -354,9 +354,15 @@ func TestHistoryWatermarkSeedsFirstSSESubscription(t *testing.T) {
 }
 
 func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
-	for _, refs := range [][]string{nil, {"WORKER_TOKEN_A", "WORKER_TOKEN_B"}} {
+	for _, selection := range []struct{ refs, services []string }{
+		{},
+		{refs: []string{"WORKER_TOKEN_A", "WORKER_TOKEN_B"}},
+		{services: []string{"gitlab", "redmine"}},
+		{refs: []string{"WORKER_TOKEN_A"}, services: []string{"gitlab"}},
+	} {
+		refs, services := selection.refs, selection.services
 		for _, operation := range []string{"session", "run", "message"} {
-			t.Run(operation+strconv.Itoa(len(refs)), func(t *testing.T) {
+			t.Run(operation+strconv.Itoa(len(refs))+strconv.Itoa(len(services)), func(t *testing.T) {
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					var body struct {
 						AllowMultipleRuns *bool `json:"allow_multiple_runs"`
@@ -366,10 +372,12 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 						} `json:"messages"`
 						Configuration *struct {
 							Sandbox struct {
-								EnvFrom []string `json:"env_from"`
+								EnvFrom  []string `json:"env_from"`
+								Services []string `json:"services"`
 							} `json:"sandbox"`
 						} `json:"configuration"`
-						EnvFrom []string `json:"env_from"`
+						EnvFrom  []string `json:"env_from"`
+						Services []string `json:"services"`
 					}
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Error(err)
@@ -381,14 +389,17 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 						if body.AllowMultipleRuns == nil || !*body.AllowMultipleRuns {
 							t.Error("Mattermost sessions must allow subsequent runs")
 						}
-						if body.Configuration == nil || !slices.Equal(body.Configuration.Sandbox.EnvFrom, refs) {
-							t.Error("session environment references missing")
+						if body.Configuration == nil || !slices.Equal(body.Configuration.Sandbox.EnvFrom, refs) || !slices.Equal(body.Configuration.Sandbox.Services, services) {
+							t.Error("session environment or service references missing")
 						}
 					} else if body.Configuration != nil {
 						t.Error("session configuration sent with run or message")
 					}
 					if operation != "session" && body.AllowMultipleRuns != nil {
 						t.Error("session run policy sent with run or message")
+					}
+					if len(body.Services) != 0 {
+						t.Error("session services sent at run or message scope")
 					}
 					if operation == "message" {
 						if len(body.EnvFrom) != 0 {
@@ -405,7 +416,7 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				workflow := config.Workflow{EnvFrom: refs, Mattermost: config.Endpoint{TokenEnv: "MATTERMOST_BOT_TOKEN"}}
+				workflow := config.Workflow{EnvFrom: refs, Services: services, Mattermost: config.Endpoint{TokenEnv: "MATTERMOST_BOT_TOKEN"}}
 				var sessionID, runID string
 				if operation != "session" {
 					sessionID = uuid.NewString()

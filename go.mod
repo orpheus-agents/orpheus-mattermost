@@ -6,7 +6,7 @@ require (
 	github.com/abox-dev/sdk/packages/go-sdk v0.2.0
 	github.com/coder/websocket v1.8.15
 	github.com/google/uuid v1.6.0
-	github.com/orpheus-agents/orpheus v0.3.0
+	github.com/orpheus-agents/orpheus v0.6.0
 	github.com/prometheus/client_golang v1.24.1
 	github.com/yuin/goldmark v1.8.6
 	gopkg.in/yaml.v3 v3.0.1
@@ -21,7 +21,7 @@ require (
 	github.com/oapi-codegen/runtime v1.7.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
-	github.com/prometheus/procfs v0.21.1 // indirect
+	github.com/prometheus/procfs v0.22.0 // indirect
 	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

@@ -56,6 +56,7 @@ type Workflow struct {
 	Profile               string    `yaml:"profile"`
 	SandboxTemplate       string    `yaml:"sandbox_template"`
 	EnvFrom               []string  `yaml:"env_from" json:"env_from,omitzero"`
+	Services              []string  `yaml:"services" json:"services,omitzero"`
 	StartOnMention        *bool     `yaml:"start_on_mention"`
 	DirectMessages        bool      `yaml:"direct_messages"`
 	PrivateChannels       bool      `yaml:"private_channels"`
@@ -93,6 +94,7 @@ type Config struct {
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
 var envPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var servicePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 var idPattern = regexp.MustCompile(`^[a-z0-9]{26}$`)
 
 func ValidID(id string) bool { return idPattern.MatchString(id) }
@@ -229,6 +231,17 @@ func (c *Config) validate() error {
 			envNames[name] = true
 		}
 		slices.Sort(w.EnvFrom)
+		services := make(map[string]bool, len(w.Services))
+		for _, code := range w.Services {
+			if !servicePattern.MatchString(code) || services[code] {
+				return fmt.Errorf("workflow %s: services must contain unique service codes", w.ID)
+			}
+			services[code] = true
+		}
+		if len(w.Services) == 0 {
+			w.Services = nil
+		}
+		slices.Sort(w.Services)
 		since, err := time.Parse(time.RFC3339, w.ReconcileFrom)
 		if err != nil || since.Location() != time.UTC {
 			return fmt.Errorf("workflow %s: reconcile_from must be fixed RFC3339 UTC", w.ID)
