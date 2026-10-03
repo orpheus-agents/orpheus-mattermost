@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -248,6 +249,7 @@ func TestFinalizingScopeRevocationSuppressesReadyAnswer(t *testing.T) {
 func TestLostAdmissionWithEditedPostAndNewRevisionDoesNotResubmit(t *testing.T) {
 	e, api, mm, _, key := fixture(t)
 	w := e.Config.Workflows[0]
+	w.Services = []string{"gitlab"}
 	ch := mattermost.Channel{ID: key.Channel, Type: "O"}
 	api.lost = true
 	if err := e.Thread(t.Context(), w, key, ch, true); err == nil {
@@ -256,11 +258,12 @@ func TestLostAdmissionWithEditedPostAndNewRevisionDoesNotResubmit(t *testing.T) 
 	mm.posts[0].Message = "@orpheus edited request"
 	mm.posts[0].EditAt = 2000
 	w.EffectiveRevision = "new-revision"
+	w.Services = []string{"redmine"}
 	e = &Engine{Config: e.Config, MM: mm, API: api, Bot: e.Bot}
 	if err := e.Thread(t.Context(), w, key, ch, true); err != nil {
 		t.Fatal(err)
 	}
-	if len(api.submitted) != 1 || !strings.Contains(joinedInput(api.submitted[0].Messages), "ORIGINAL_REQUEST_BODY") {
+	if len(api.submitted) != 1 || !strings.Contains(joinedInput(api.submitted[0].Messages), "ORIGINAL_REQUEST_BODY") || !slices.Equal(api.submitted[0].Workflow.Services, []string{"gitlab"}) {
 		t.Fatal("accepted envelope replaced after restart")
 	}
 }
@@ -604,27 +607,32 @@ func (a *rejectedAPI) Submit(ctx context.Context, w config.Workflow, e conversat
 	return a.fakeAPI.Submit(ctx, w, e, messages, sid, rid, pred)
 }
 func TestValidationErrorIsDurablyRejected(t *testing.T) {
-	e, api, mm, _, key := fixture(t)
-	bad := &rejectedAPI{fakeAPI: api, code: "validation_error"}
-	e.API = bad
-	for range 3 {
-		if err := e.Thread(t.Context(), e.Config.Workflows[0], key, mattermost.Channel{ID: key.Channel, Type: "O"}, true); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if bad.calls != 1 || mm.calls != 1 {
-		t.Fatal("invalid input retried", bad.calls, mm.calls)
-	}
-	bad.code = ""
-	updated := e.Config.Workflows[0]
-	updated.EffectiveRevision = "fixed-configuration"
-	if err := e.Thread(t.Context(), updated, key, mattermost.Channel{ID: key.Channel, Type: "O"}, true); err != nil {
-		t.Fatal(err)
-	}
-	if len(api.submitted) != 1 {
-		t.Fatal("fixed configuration still blocked by old rejection")
+	for _, code := range []string{"validation_error", "unknown_profile", "unknown_template", "unknown_service"} {
+		t.Run(code, func(t *testing.T) {
+			e, api, mm, _, key := fixture(t)
+			bad := &rejectedAPI{fakeAPI: api, code: code}
+			e.API = bad
+			for range 3 {
+				if err := e.Thread(t.Context(), e.Config.Workflows[0], key, mattermost.Channel{ID: key.Channel, Type: "O"}, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if bad.calls != 1 || mm.calls != 1 {
+				t.Fatal("invalid input retried", bad.calls, mm.calls)
+			}
+			bad.code = ""
+			updated := e.Config.Workflows[0]
+			updated.EffectiveRevision = "fixed-configuration"
+			if err := e.Thread(t.Context(), updated, key, mattermost.Channel{ID: key.Channel, Type: "O"}, true); err != nil {
+				t.Fatal(err)
+			}
+			if len(api.submitted) != 1 {
+				t.Fatal("fixed configuration still blocked by old rejection")
+			}
+		})
 	}
 }
+
 func TestClosedRunWaitsWithoutRetryingFinalizingTarget(t *testing.T) {
 	e, api, mm, _, key := fixture(t)
 	w := e.Config.Workflows[0]

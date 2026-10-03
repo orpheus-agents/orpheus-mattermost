@@ -358,6 +358,9 @@ func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.E
 		if len(w.EnvFrom) > 0 {
 			conf.Sandbox.EnvFrom = &w.EnvFrom
 		}
+		if len(w.Services) > 0 {
+			conf.Sandbox.Services = &w.Services
+		}
 		namespace := e.Key().Namespace()
 		externalKey := e.Key().External()
 		sessionBody = api.CreateSession{AllowMultipleRuns: new(true), Messages: input, Namespace: &namespace, ExternalKey: &externalKey, Configuration: conf, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
