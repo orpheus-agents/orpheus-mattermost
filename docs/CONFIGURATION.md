@@ -25,8 +25,9 @@ workflow IDs, and overlapping routes are errors.
 
 API URLs must be absolute HTTP(S) URLs without credentials, query, or fragment.
 Credential-bearing requests do not follow redirects. Helpers receive the
-Mattermost token via Orpheus `env_from`; allow its variable name in the worker's
-`HARNESS_ENV_ALLOWLIST`. Helpers do not receive the Orpheus or AgentBox API key.
+Mattermost token via Orpheus `env_from`. Allow its variable name on API and worker
+through a service or `HARNESS_ENV_ALLOWLIST`. Helpers do not receive the Orpheus
+or AgentBox API key.
 
 Files are loaded in filename order from `WORKFLOWS_DIR`, without recursion.
 Hidden files, editor backups, and non-Markdown files are ignored. At least one
@@ -142,6 +143,7 @@ semantic setting.
 
 | Field | Default | Behavior |
 | --- | --- | --- |
+| `services` | `[]` | Unique catalog codes passed as `configuration.sandbox.services` to the agent session |
 | `env_from` | `[]` | Worker ENV names passed as `configuration.sandbox.env_from` to the agent session |
 | `include_ids`, `exclude_ids` | `[]` | Specialized workflows reserve their channels ahead of a generic workflow |
 | `direct_messages` | `false` | One DM owner; messages need no mention |
@@ -160,19 +162,23 @@ semantic setting.
 | `max_post_chars` | `12000` | Unicode code points, also capped by the server limit |
 | `initial_context_token_budget` | `100000` | Approximate context budget, with separate API/ENV byte checks |
 
-`env_from` contains unique environment variable names, never values. The connector
-does not resolve them. Provide values to the Orpheus worker and allow the names in
-`HARNESS_ENV_ALLOWLIST` on both API and worker. Orpheus validates reserved names
-and the allowlist; the worker resolves values when preparing the session.
-Changing this list rotates the session; reordering it does not.
-The Mattermost token reference remains run-scoped for file hooks unless explicitly
-included in this list.
+`services` contains unique codes from the Orpheus service catalog. Unknown codes
+reject session creation. `env_from` can add individual ENV names. Configure the
+same catalog and `HARNESS_ENV_ALLOWLIST` on Orpheus API and worker. Service ENV
+names automatically join that allowlist. Values belong on the Orpheus worker.
+Changing either selection rotates the session. Reordering it does not. If a
+service definition changes under the same code, increment `revision` explicitly.
+The Mattermost token reference remains run-scoped for file hooks unless selected
+for the agent through a service or `env_from`.
 
 ```yaml
-env_from:
-  - GITLAB_TOKEN
-  - GITLAB_HOST
+services: [gitlab]
 ```
+
+After correcting an unknown profile, template or service, increase `revision`
+and reload workflows. Rejected input is retried under the new effective revision
+without restarting the connector. Rejection notices are deduplicated by revision,
+reason and input.
 
 Subsequent channel requests require a mention even when `start_on_mention=false`.
 Idle time does not close or rotate a session. Orpheus owns sandbox pauses. Budget
