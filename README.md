@@ -9,7 +9,7 @@
 
 # Orpheus + Mattermost
 
-A Go connector for Mattermost. It requires Orpheus `v0.3.0` or newer.
+A Go connector for Mattermost. It requires Orpheus `v0.6.0` or newer.
 It routes thread messages,
 prepares conversation context and attachments, delivers clarifications to running
 agents, and publishes progress, answers, and output files.
@@ -38,11 +38,11 @@ and anchor post; they do not replace the accepted input snapshot.
 3. Use a Linux AgentBox template with `python3` (3.9 or later). File hooks are
    embedded in the connector and installed automatically; no template rebuild or
    pip dependencies are needed.
-4. Configure the Orpheus profile. Allow the Mattermost token's variable name in
-   API and worker's `HARNESS_ENV_ALLOWLIST` and provide its value to the worker.
-   To pass tool credentials to the agent, list their worker ENV names in the
-   workflow's `env_from` and allow them in the same allowlist. The connector does
-   not need their values.
+4. Configure the Orpheus profile and service catalog. Include the Mattermost
+   token's ENV name in a service or `HARNESS_ENV_ALLOWLIST` on API and worker,
+   and supply its value to the worker for file hooks. Select tool services in
+   the workflow's `services`, for example `services: [gitlab]`. Optional
+   `env_from` adds individual ENV names. The connector does not need tool values.
 5. Run `make start`; use `make stop` to shut down.
 
 Process settings come from ENV. Mattermost URL and token reference, workflow policy,
