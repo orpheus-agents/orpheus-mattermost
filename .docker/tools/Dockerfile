@@ -1,10 +1,10 @@
 FROM hadolint/hadolint:v2.15.1 AS hadolint
 FROM aquasec/trivy:0.74.0 AS trivy
-FROM golang:1.27.1-bookworm
+FROM golang:1.27.2-bookworm
 COPY --from=hadolint /bin/hadolint /usr/local/bin/hadolint
 COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
-    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 && \
+    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 && \
     go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 && \
     go install golang.org/x/tools/cmd/goimports@v0.48.0
 # hadolint ignore=DL3008
