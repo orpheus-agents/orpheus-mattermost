@@ -16,6 +16,7 @@ import (
 	"github.com/orpheus-agents/orpheus-mattermost/internal/attachments"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/config"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/mattermost"
+	api "github.com/orpheus-agents/orpheus/client"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
@@ -86,10 +87,12 @@ type ContextSource interface {
 	Files(context.Context, string) ([]mattermost.FileInfo, error)
 }
 type Builder struct {
-	Source   ContextSource
-	Config   config.Config
-	Workflow config.Workflow
-	Bot      mattermost.User
+	TriggerOnly  bool
+	ContextStart *ContextStart
+	Source       ContextSource
+	Config       config.Config
+	Workflow     config.Workflow
+	Bot          mattermost.User
 }
 
 type postAuthor struct {
@@ -208,14 +211,20 @@ func initialContext(posts []mattermost.Post, mandatory map[string]bool, root str
 
 // InputMessage is one agent-visible item. PostID is empty for context notices.
 type InputMessage struct {
-	PostID string `json:"-"`
-	Text   string `json:"text"`
+	PostID  string            `json:"-"`
+	Text    string            `json:"text"`
+	Subject api.AccessSubject `json:"-"`
 }
 
 const maxInputMessages = 256
 
 // BuildMessages selects a deterministic prefix of triggers as separate items.
 func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.Channel, posts []mattermost.Post, snapshot Snapshot, initial bool, now time.Time) (Envelope, []InputMessage, error) {
+	if b.ContextStart != nil {
+		posts = slices.DeleteFunc(slices.Clone(posts), func(p mattermost.Post) bool {
+			return p.CreateAt < b.ContextStart.CreatedAt || p.CreateAt == b.ContextStart.CreatedAt && p.ID < b.ContextStart.PostID
+		})
+	}
 	known, contextIDs := snapshot.Known()
 	knownVersions := map[string]Version{}
 	for _, session := range snapshot.Sessions {
@@ -248,6 +257,9 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 			u, err = b.Source.User(ctx, p.UserID)
 			if err != nil {
 				return Envelope{}, nil, err
+			}
+			if b.Workflow.Access != nil && (u.ID != p.UserID || u.DeleteAt != 0) {
+				return Envelope{}, nil, fmt.Errorf("unconfirmed Mattermost author")
 			}
 			users[p.UserID] = u
 		}
@@ -318,12 +330,16 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 				if !initial && p.UserID == b.Bot.ID {
 					continue
 				}
-				if initial || !contextIDs[p.ID] || mandatory[p.ID] {
+				if (!b.TriggerOnly || mandatory[p.ID]) && (initial || !contextIDs[p.ID] || mandatory[p.ID]) {
 					eligible = append(eligible, p)
 				}
 			}
 			chosen := initialContext(eligible, mandatory, key.Root, budget)
 			e := Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: b.Workflow.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: anchor.ID, WindowEnd: cutoff, Kind: "initial", Render: Render{renderVersion, b.Workflow.MaxPostChars, *b.Workflow.SendCommentary}}
+			e.ContextStart = b.ContextStart
+			if b.TriggerOnly {
+				e.ContextStart = &ContextStart{CreatedAt: anchor.CreateAt, PostID: anchor.ID}
+			}
 			for _, p := range triggers[:count] {
 				e.TriggerIDs = append(e.TriggerIDs, p.ID)
 			}
@@ -349,6 +365,9 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 						return err
 					}
 					users[p.UserID] = u
+				}
+				if b.Workflow.Access != nil && (u.ID != p.UserID || u.DeleteAt != 0) {
+					return fmt.Errorf("unconfirmed Mattermost author")
 				}
 				message := p.Message
 				if origin == "thread_reference" {
@@ -414,6 +433,9 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 				}
 				out.WriteByte('\n')
 				appendMessage(p.ID, out.String())
+				if b.Workflow.Access != nil {
+					messages[len(messages)-1].Subject = api.AccessSubject{Namespace: b.Workflow.Access.Namespace, ID: u.ID}
+				}
 				return nil
 			}
 			for _, p := range chosen {
@@ -422,10 +444,10 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 				}
 			}
 			threadCount := len(messages)
-			if len(chosen) < len(eligible) {
+			if b.Workflow.Access == nil && len(chosen) < len(eligible) {
 				appendMessage("", fmt.Sprintf("[Context omitted: %d posts, %s — %s]\n", len(eligible)-len(chosen), time.UnixMilli(eligible[0].CreateAt).UTC().Format(time.RFC3339), time.UnixMilli(eligible[len(eligible)-1].CreateAt).UTC().Format(time.RFC3339)))
 			}
-			if *b.Workflow.Links.Enabled {
+			if b.Workflow.Access == nil && *b.Workflow.Links.Enabled {
 				links := []string{}
 				for _, p := range chosen {
 					body := p.Message

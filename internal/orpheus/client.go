@@ -346,11 +346,14 @@ func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.E
 		operation = "message"
 		key = e.Key().Operation(e.Anchor, "message", runID, predecessor)
 		messageBody = api.SendMessage{Messages: input}
+		if e.AccessContext != nil {
+			messageBody.AccessContext = &api.InputAccessContext{InputSubjects: e.InputSubjects}
+		}
 		request = messageBody
 	case sessionID != "":
 		operation = "run"
 		key = e.Key().Operation(e.Anchor, "run", sessionID, predecessor)
-		runBody = api.CreateRun{Messages: input, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
+		runBody = api.CreateRun{AccessContext: e.AccessContext, Messages: input, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
 		request = runBody
 	default:
 		operation = "session"
@@ -363,7 +366,7 @@ func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.E
 		}
 		namespace := e.Key().Namespace()
 		externalKey := e.Key().External()
-		sessionBody = api.CreateSession{AllowMultipleRuns: new(true), Messages: input, Namespace: &namespace, ExternalKey: &externalKey, Configuration: conf, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
+		sessionBody = api.CreateSession{AccessContext: e.AccessContext, AllowMultipleRuns: new(true), Messages: input, Namespace: &namespace, ExternalKey: &externalKey, Configuration: conf, Env: &env, EnvFrom: &envFrom, InputFingerprint: &fingerprint}
 		request = sessionBody
 		key = e.Key().Operation(e.Anchor, "session", e.Key().External(), predecessor)
 	}

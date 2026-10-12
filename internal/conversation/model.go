@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/attachments"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/config"
+	api "github.com/orpheus-agents/orpheus/client"
 )
 
 var operationNamespace = uuid.MustParse("1cd37086-3385-5b91-8925-e9f1fd9fe83d")
@@ -58,22 +59,36 @@ type Render struct {
 	MaxChars   int  `json:"max_chars"`
 	Commentary bool `json:"commentary"`
 }
+type ContextStart struct {
+	CreatedAt int64  `json:"created_at"`
+	PostID    string `json:"post_id"`
+}
+
+func (k Key) Invocation(anchor string) uuid.UUID {
+	b, _ := json.Marshal([]string{k.Source, k.Workflow, k.Channel, k.Root, anchor})
+	return uuid.NewSHA1(operationNamespace, b)
+}
+
 type Envelope struct {
-	Schema      int                 `json:"schema"`
-	Source      string              `json:"source"`
-	Workflow    string              `json:"workflow"`
-	Revision    string              `json:"revision"`
-	Channel     string              `json:"channel"`
-	Root        string              `json:"root"`
-	Anchor      string              `json:"anchor"`
-	WindowEnd   int64               `json:"window_end"`
-	Kind        string              `json:"submission_kind"`
-	TriggerIDs  []string            `json:"trigger_post_ids"`
-	ContextIDs  []string            `json:"context_post_ids"`
-	Versions    []Version           `json:"versions"`
-	Request     attachments.Request `json:"input"`
-	Render      Render              `json:"render"`
-	Predecessor string              `json:"predecessor,omitempty"`
+	AccessContext *api.AccessContext  `json:"access_context,omitzero"`
+	AccessProof   *AccessProof        `json:"access_proof,omitzero"`
+	ContextStart  *ContextStart       `json:"context_start,omitzero"`
+	InputSubjects []api.AccessSubject `json:"input_subjects,omitzero"`
+	Schema        int                 `json:"schema"`
+	Source        string              `json:"source"`
+	Workflow      string              `json:"workflow"`
+	Revision      string              `json:"revision"`
+	Channel       string              `json:"channel"`
+	Root          string              `json:"root"`
+	Anchor        string              `json:"anchor"`
+	WindowEnd     int64               `json:"window_end"`
+	Kind          string              `json:"submission_kind"`
+	TriggerIDs    []string            `json:"trigger_post_ids"`
+	ContextIDs    []string            `json:"context_post_ids"`
+	Versions      []Version           `json:"versions"`
+	Request       attachments.Request `json:"input"`
+	Render        Render              `json:"render"`
+	Predecessor   string              `json:"predecessor,omitempty"`
 }
 
 func (e Envelope) Key() Key                { return Key{e.Source, e.Workflow, e.Channel, e.Root} }

@@ -28,6 +28,11 @@ object in message history and events but sends only each item's `text` to the ag
 External keys identify the thread
 and anchor post; they do not replace the accepted input snapshot.
 
+Protected workflows can use [temporary service credentials](docs/CONFIGURATION.md#protected-service-access). This requires the core API proposed in
+[orpheus#44](https://github.com/orpheus-agents/orpheus/pull/44). The temporary Go
+module replacement pins that PR commit; replace it with an upstream release
+containing the API before merging this connector change.
+
 ## Run
 
 1. Copy `.env.dist` to `.env` and set the Orpheus URL and credentials.

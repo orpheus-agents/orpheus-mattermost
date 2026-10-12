@@ -18,6 +18,7 @@ import (
 	"github.com/orpheus-agents/orpheus-mattermost/internal/delivery"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/mattermost"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/orpheus"
+	api "github.com/orpheus-agents/orpheus/client"
 )
 
 type API interface {
@@ -34,6 +35,7 @@ type MM interface {
 	Channels(context.Context) ([]mattermost.Channel, error)
 	Posts(context.Context, string, time.Time) ([]mattermost.Post, error)
 	Me(context.Context) (mattermost.User, error)
+	Audience(context.Context, string) ([]string, error)
 	MaxPostChars(context.Context) (int, error)
 	Typing(context.Context, string, string) error
 	Watch(context.Context, func(mattermost.Event)) error
@@ -45,6 +47,8 @@ type Sandbox interface {
 }
 
 type pending struct {
+	Channel                   mattermost.Channel
+	TriggerPosts              []mattermost.Post
 	Workflow                  config.Workflow
 	Envelope                  conversation.Envelope
 	Session, Run, Predecessor string
@@ -411,6 +415,14 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 					}
 				}
 			}
+			if targetLost && frozen.Workflow.Access != nil {
+				// Never reissue under a new snapshot after an uncertain admission.
+				if err := e.reject(ctx, p, frozen.Envelope, frozen.Messages, "The pending protected request lost its session. Send a new mention."); err != nil {
+					return err
+				}
+				e.clear(key)
+				return nil
+			}
 			if targetLost || frozen.Run != "" && (run == nil || run.ID != frozen.Run) {
 				// History proves that the clarification was not accepted and
 				// its target no longer accepts input. Rebuild admission below:
@@ -441,6 +453,39 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 	rejected := p.Rejected(w.EffectiveRevision)
 	posts := slices.DeleteFunc(slices.Clone(p.Posts), func(post mattermost.Post) bool { return rejected[post.ID] })
 	builder := conversation.Builder{Source: e.MM, Config: e.Config, Workflow: w, Bot: e.Bot}
+	var runContract conversation.Envelope
+	if w.Access != nil {
+		if channel.Type != "P" || w.Access.BotID != e.Bot.ID {
+			return errors.New("protected channel binding mismatch")
+		}
+		retained := latest
+		retainedRun := (*conversation.Run)(nil)
+		if latest != nil {
+			retainedRun = latest.Latest()
+		}
+		if run != nil {
+			retained, retainedRun = current, run
+		}
+		previous, provenanceErr := protectedContract(retained, retainedRun, w, key)
+		if run != nil {
+			if provenanceErr != nil {
+				return provenanceErr
+			}
+			runContract = previous
+			allowed := *previous.AccessContext.AllowedInputSubjects
+			// Filter before BuildMessages: excluded authors' files must never
+			// reach the running sandbox. They stay unaccepted in Mattermost.
+			posts = slices.DeleteFunc(posts, func(post mattermost.Post) bool {
+				return !slices.Contains(allowed, api.AccessSubject{Namespace: w.Access.Namespace, ID: post.UserID})
+			})
+		} else if provenanceErr != nil {
+			initial = true
+		}
+		if !initial {
+			builder.ContextStart = previous.ContextStart
+		}
+		builder.TriggerOnly = initial
+	}
 	env, messages, buildErr := builder.BuildMessages(ctx, key, channel, posts, snapshot, initial, time.Now())
 	predecessor := ""
 	if latest != nil {
@@ -448,7 +493,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 			predecessor = last.ID
 		}
 	}
-	if run == nil {
+	if run == nil && w.Access == nil {
 		if t, body, pred, ok := transfer(snapshot); ok {
 			env = t
 			env.Revision = w.EffectiveRevision
@@ -543,6 +588,31 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 	if run == nil && e.Reserve != nil && !e.Reserve(key, w) {
 		return nil
 	}
+	if w.Access != nil {
+		frozen.Channel = channel
+		for _, post := range posts {
+			if slices.Contains(env.TriggerIDs, post.ID) {
+				frozen.TriggerPosts = append(frozen.TriggerPosts, post)
+			}
+		}
+		if run != nil {
+			frozen.Envelope.AccessContext = runContract.AccessContext
+			frozen.Envelope.AccessProof = runContract.AccessProof
+			for _, message := range messages {
+				if !slices.Contains(*runContract.AccessContext.AllowedInputSubjects, message.Subject) {
+					return errors.New("unconfirmed input author")
+				}
+				frozen.Envelope.InputSubjects = append(frozen.Envelope.InputSubjects, message.Subject)
+			}
+		} else {
+			access, proof, err := e.admission(ctx, w, key, env, posts)
+			if err != nil {
+				return err
+			}
+			frozen.Envelope.AccessContext = access
+			frozen.Envelope.AccessProof = proof
+		}
+	}
 	e.set(key, frozen)
 	return e.submit(ctx, key, frozen, current, run)
 }
@@ -577,8 +647,16 @@ func (e *Engine) submit(ctx context.Context, key conversation.Key, p pending, cu
 		// Keep the frozen input until history proves whether it was accepted.
 		return nil
 	}
+	if failure, ok := errors.AsType[*orpheus.Error](err); ok && failure.Status == 409 && failure.Code == "service_scope_changed" && p.Workflow.Access != nil && p.Run == "" && p.Session != "" {
+		clean, buildErr := e.cleanPending(ctx, p)
+		if buildErr != nil {
+			return buildErr
+		}
+		e.set(key, clean)
+		return e.submit(ctx, key, clean, nil, nil)
+	}
 	switch code := orpheus.Code(err); code {
-	case "request_too_large", "environment_too_large", "validation_error", "unknown_profile", "unknown_template", "unknown_service":
+	case "service_access_denied", "service_credentials_conflict", "invocation_already_accepted", "access_context_required", "input_subject_denied", "invalid_service_scope", "request_too_large", "environment_too_large", "validation_error", "unknown_profile", "unknown_template", "unknown_service":
 		publisher := &delivery.Publisher{MM: e.MM, Key: key, BotID: e.Bot.ID}
 		if readErr := publisher.Refresh(ctx); readErr != nil {
 			return readErr
@@ -618,6 +696,11 @@ func (e *Engine) Validate(ctx context.Context) error {
 	}
 	if !config.ValidID(me.ID) || me.Username == "" {
 		return errors.New("invalid Mattermost bot identity")
+	}
+	for _, w := range e.Config.Workflows {
+		if w.Access != nil && w.Access.BotID != me.ID {
+			return errors.New("protected workflow bot binding mismatch")
+		}
 	}
 	e.Bot = me
 	e.SourceID = e.Config.Workflows[0].Mattermost.Source(me.ID)

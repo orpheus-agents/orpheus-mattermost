@@ -260,3 +260,110 @@ Full REST replay costs grow with history since `reconcile_from`. Concurrent writ
 can shift pages; the next full scan catches omissions, while admission keys
 suppress duplicates. Channel replay uses page/per-page, not `since` or `before`,
 which can truncate results or lose posts sharing a timestamp at a page boundary.
+
+## Protected service access
+
+A workflow can bind a private channel to provider-backed services:
+
+```yaml
+services: [protected-data]
+private_channels: true
+direct_messages: false
+group_messages: false
+include_ids: [cccccccccccccccccccccccccc]
+start_on_mention: true
+link_expansion:
+  enabled: false
+access_context:
+  namespace: mattermost:example
+  bot_id: bbbbbbbbbbbbbbbbbbbbbbbbbb
+  scope_context:
+    workspace: example
+  identity_projection:
+    actor_field: requester
+    audience_field: readers
+    subjects:
+      hhhhhhhhhhhhhhhhhhhhhhhhhh: 42
+      nnnnnnnnnnnnnnnnnnnnnnnnnn: 77
+```
+
+These are server-controlled integration identifiers, not model instructions.
+The configured bot must match `/users/me`. The provider validates the binding
+and its own data permissions. Bot choice and product instructions remain in the
+workflow. An unconfigured workflow retains its existing behavior.
+
+`scope_context` is a static JSON object expressed in YAML. `identity_projection`
+adds the configured actor field and reader array using explicit source-user
+mappings. The field names and service identities belong to the integration;
+the connector has no provider-specific schema. For the example above, a request
+from `hhhh...` with both mapped users present sends this opaque scope:
+
+```json
+{"workspace":"example","requester":42,"readers":[42,77]}
+```
+
+Mapped identities must be distinct nonempty strings (up to 128 UTF-8 bytes) or
+canonical decimal integers (up to 128 characters). Integer identity values do
+not pass through floating-point conversion. The provider validates its own ID
+range and data policy. Booleans, null, arrays, objects and fractions are not
+identities. A projection field cannot overlap the static context. Static context
+is limited to 64 fields and 16 KiB; mappings are limited to 4,096 source users.
+A missing mapping fails admission. Multiple source users cannot share one
+service identity. The authenticated execution bot is the only excluded service
+reader and must not appear in the mapping. Other bots are rejected, even if
+mapped. No role or display-name fallback is used.
+
+The full confirmed Mattermost audience, including the execution bot, remains
+in a separate `allowed_input_subjects` list of namespaced source identities.
+The connector stores `access_proof` in its message metadata: the frozen source
+audience and a digest of the projection configuration. Channel, root and source
+identity remain in the existing envelope. Provider scope contains none of these
+transport fields unless an integration explicitly configures such static data.
+
+After a run slot is reserved, the connector reads the private channel and all
+membership pages, including admins and bots. It checks counts before and after
+pagination and rejects missing, duplicate, invalid or incomplete results. It
+confirms each mapped reader through the user API, including account state and
+bot status, before issuing credentials.
+Mattermost has no transactional membership snapshot: equal-count replacements
+concurrent with pagination cannot be detected by counts alone. Live acceptance
+must verify the server's membership semantics. Public channels and DMs are not
+supported by protected workflows. The observation must complete in less than 60 seconds.
+See the [Mattermost membership API](https://github.com/mattermost/mattermost/blob/master/api/v4/source/channels.yaml).
+
+The invocation UUID depends only on source, workflow, channel, root and anchor.
+Before acceptance, the existing pending input freezes the audience and context;
+accepted metadata survives process restarts. Uncertain responses are reconciled
+against accepted history before another submission. A lost, unaccepted pending
+snapshot is not reconstructed transparently: the same invocation with different
+context is rejected by the provider and needs a new mention.
+
+On recovery, the connector validates the envelope binding, transport proof,
+projection digest, projected service scope and explicit input list before
+building context or preparing files. Missing legacy authority/proof, an invalid
+projection or a mismatched namespace/list blocks updates to an active run.
+The next run starts a clean session and history boundary. The connector never
+derives missing input authority from service scope. An unreadable metadata
+envelope still fails closed and requires repair.
+
+Projection configuration participates in the existing workflow revision. A
+mapping or static-context change does not reinterpret an active run: the current
+response finishes with its frozen snapshot, no new clarifications are delivered
+under the changed revision, and the next run starts clean. Frozen pending
+admission retries retain the original projection and invocation.
+
+Active clarifications use the initial explicit input list. Authors outside it remain
+unaccepted in Mattermost; neither their text nor files enter `BuildMessages` or
+`Sandbox.Prepare`. Every delivered item has its confirmed author in the existing
+`SendMessage.access_context.input_subjects`. Renewal and publication do not fetch
+a new audience.
+
+Only `409 service_scope_changed` rotates a reusable protected session. The new
+session keeps the invocation, but rebuilds only the frozen triggering posts.
+It does not transfer the old payload or file index. First admission and unknown
+memory provenance use the same `trigger_only` builder mode. Accepted metadata
+stores `context_start: {created_at, post_id}`; later builders filter before
+reading files, even if the boundary post has been deleted. Linked-thread
+expansion is disabled. Rejected clarifications from a finished run are not
+transferred automatically for protected workflows; a new mention is required.
+Delivery, outbox, external thread keys and the stock queue remain unchanged.
