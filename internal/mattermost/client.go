@@ -171,6 +171,9 @@ func (c *Client) Channel(ctx context.Context, id string) (Channel, error) {
 	err := c.json(ctx, "GET", "/channels/"+url.PathEscape(id), nil, &v)
 	return v, err
 }
+func (c *Client) RemoveChannelMember(ctx context.Context, channel, user string) error {
+	return c.json(ctx, "DELETE", "/channels/"+url.PathEscape(channel)+"/members/"+url.PathEscape(user), nil, nil)
+}
 func (c *Client) Post(ctx context.Context, id string) (Post, error) {
 	var v Post
 	err := c.json(ctx, "GET", "/posts/"+url.PathEscape(id), nil, &v)

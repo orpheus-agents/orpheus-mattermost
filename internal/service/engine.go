@@ -32,6 +32,7 @@ type MM interface {
 	conversation.ContextSource
 	delivery.Source
 	Channels(context.Context) ([]mattermost.Channel, error)
+	RemoveChannelMember(context.Context, string, string) error
 	Posts(context.Context, string, time.Time) ([]mattermost.Post, error)
 	Me(context.Context) (mattermost.User, error)
 	MaxPostChars(context.Context) (int, error)
