@@ -145,7 +145,7 @@ semantic setting.
 | --- | --- | --- |
 | `services` | `[]` | Unique catalog codes passed as `configuration.sandbox.services` to the agent session |
 | `env_from` | `[]` | Worker ENV names passed as `configuration.sandbox.env_from` to the agent session |
-| `include_ids`, `exclude_ids` | `[]` | Specialized workflows reserve their channels ahead of a generic workflow |
+| `include_ids`, `exclude_ids` | `[]` | Specialized workflows reserve their channels ahead of a generic workflow; they do not opt in to private or group channels |
 | `direct_messages` | `false` | One DM owner; messages need no mention |
 | `private_channels`, `group_messages` | `false` | Explicit opt-in for private/group channels |
 | `start_on_mention` | `true` | Require a mention to start a new channel thread |
@@ -161,6 +161,13 @@ semantic setting.
 | `max_session_tokens` | `100000000` | Session token budget |
 | `max_post_chars` | `12000` | Unicode code points, also capped by the server limit |
 | `initial_context_token_budget` | `100000` | Approximate context budget, with separate API/ENV byte checks |
+
+The connector automatically leaves every joined private channel that is not
+routed to a workflow. It checks membership at startup, after configuration reload,
+on Mattermost membership events, and during polling. Set `private_channels: true`
+and, for an allowlist, `include_ids` before adding the bot. Removal failures block
+readiness and new runs until a retry succeeds; a `404` means the membership is
+already gone.
 
 `services` contains unique codes from the Orpheus service catalog. Unknown codes
 reject session creation. `env_from` can add individual ENV names. Configure the

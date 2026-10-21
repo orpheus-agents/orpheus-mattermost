@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	goruntime "runtime"
 	"slices"
@@ -42,6 +43,139 @@ func (a *runtimeAPI) Submit(ctx context.Context, _ config.Workflow, _ conversati
 type runtimeSource struct {
 	*fakeSource
 	channel string
+}
+
+type membershipSource struct {
+	MM
+	channels  []mattermost.Channel
+	removed   []string
+	postCalls []string
+	errors    map[string]error
+}
+
+func (s *membershipSource) RemoveChannelMember(_ context.Context, channel, user string) error {
+	s.removed = append(s.removed, channel+":"+user)
+	return s.errors[channel]
+}
+func (s *membershipSource) Channels(context.Context) ([]mattermost.Channel, error) {
+	return slices.Clone(s.channels), nil
+}
+func (s *membershipSource) Posts(_ context.Context, channel string, _ time.Time) ([]mattermost.Post, error) {
+	s.postCalls = append(s.postCalls, channel)
+	return nil, nil
+}
+
+func TestUnroutedPrivateChannelsAreLeft(t *testing.T) {
+	engine, _, _, _, _ := fixture(t)
+	const (
+		routed   = "pppppppppppppppppppppppppp"
+		unrouted = "uuuuuuuuuuuuuuuuuuuuuuuuuu"
+		public   = "oooooooooooooooooooooooooo"
+		group    = "gggggggggggggggggggggggggg"
+		direct   = "dddddddddddddddddddddddddd"
+	)
+	cfg := engine.Config
+	cfg.Workflows = slices.Clone(cfg.Workflows)
+	cfg.Workflows[0].PrivateChannels = true
+	cfg.Workflows[0].IncludeIDs = []string{routed}
+	source := &membershipSource{}
+	runtime := &Runtime{
+		Engine: &Engine{MM: source, Bot: mattermost.User{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+		Logger: slog.New(slog.DiscardHandler),
+	}
+	channels := []mattermost.Channel{
+		{ID: routed, Type: "P"},
+		{ID: unrouted, Type: "P"},
+		{ID: public, Type: "O"},
+		{ID: group, Type: "G"},
+		{ID: direct, Type: "D"},
+		{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaa", Type: "P", DeleteAt: 1},
+	}
+	kept, err := runtime.leaveUnroutedPrivateChannels(t.Context(), cfg, channels, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(source.removed, []string{unrouted + ":bbbbbbbbbbbbbbbbbbbbbbbbbb"}) {
+		t.Fatalf("removed=%v", source.removed)
+	}
+	got := make([]string, 0, len(kept))
+	for _, channel := range kept {
+		got = append(got, channel.ID)
+	}
+	if !slices.Equal(got, []string{routed, public, group, direct, "aaaaaaaaaaaaaaaaaaaaaaaaaa"}) {
+		t.Fatalf("kept=%v", got)
+	}
+}
+
+func TestPrivateChannelRemovalMustSucceed(t *testing.T) {
+	engine, _, _, _, _ := fixture(t)
+	const (
+		forbidden = "pppppppppppppppppppppppppp"
+		removable = "qqqqqqqqqqqqqqqqqqqqqqqqqq"
+	)
+	source := &membershipSource{errors: map[string]error{forbidden: &mattermost.HTTPError{Status: 403}}}
+	runtime := &Runtime{
+		Engine: &Engine{MM: source, Bot: mattermost.User{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+		Logger: slog.New(slog.DiscardHandler),
+	}
+	channels := []mattermost.Channel{{ID: forbidden, Type: "P"}, {ID: removable, Type: "P"}}
+	if _, err := runtime.leaveUnroutedPrivateChannels(t.Context(), engine.Config, channels, 0); mattermost.Status(err) != 403 {
+		t.Fatalf("err=%v", err)
+	}
+	if !slices.Equal(source.removed, []string{forbidden + ":bbbbbbbbbbbbbbbbbbbbbbbbbb", removable + ":bbbbbbbbbbbbbbbbbbbbbbbbbb"}) {
+		t.Fatalf("removal stopped after failure: %v", source.removed)
+	}
+	source.errors[forbidden] = &mattermost.HTTPError{Status: 404}
+	kept, err := runtime.leaveUnroutedPrivateChannels(t.Context(), engine.Config, channels, 0)
+	if err != nil || len(kept) != 0 {
+		t.Fatalf("kept=%v err=%v", kept, err)
+	}
+}
+
+func TestPrivateChannelRemovalUsesCurrentConfiguration(t *testing.T) {
+	engine, _, _, _, _ := fixture(t)
+	const channel = "pppppppppppppppppppppppppp"
+	source := &membershipSource{}
+	runtime := &Runtime{
+		Engine: &Engine{MM: source, Bot: mattermost.User{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+		Logger: slog.New(slog.DiscardHandler),
+		epoch:  2,
+	}
+	channels := []mattermost.Channel{{ID: channel, Type: "P"}}
+	kept, err := runtime.leaveUnroutedPrivateChannels(t.Context(), engine.Config, channels, 1)
+	if err != nil || len(kept) != 1 || len(source.removed) != 0 {
+		t.Fatalf("kept=%v removed=%v err=%v", kept, source.removed, err)
+	}
+}
+
+func TestPrivateChannelScanFailsClosed(t *testing.T) {
+	engine, _, _, _, _ := fixture(t)
+	const channel = "pppppppppppppppppppppppppp"
+	source := &membershipSource{
+		channels: []mattermost.Channel{{ID: channel, Type: "P"}},
+		errors:   map[string]error{channel: &mattermost.HTTPError{Status: 403}},
+	}
+	runtime := &Runtime{
+		Engine:      &Engine{Config: engine.Config, MM: source, API: &runtimeAPI{}, Bot: mattermost.User{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+		Logger:      slog.New(slog.DiscardHandler),
+		jobs:        map[conversation.Key]*scheduled{},
+		channels:    map[string]mattermost.Channel{},
+		active:      map[conversation.Key]int{},
+		unknown:     map[conversation.Key]bool{},
+		scanned:     map[string]time.Time{},
+		discovered:  map[string]time.Time{},
+		digests:     map[conversation.Key]string{},
+		wake:        make(chan struct{}, 1),
+		scanning:    true,
+		discovering: true,
+	}
+	runtime.scan(t.Context(), engine.Config, nil, 0)
+	if runtime.initialized || runtime.ready.Load() || runtime.scanning || runtime.discovering {
+		t.Fatal("failed membership revocation did not block readiness and admission")
+	}
+	if len(source.removed) != 1 || len(source.postCalls) != 0 || len(runtime.channels) != 0 {
+		t.Fatalf("removed=%v post_calls=%v channels=%v", source.removed, source.postCalls, runtime.channels)
+	}
 }
 
 func (s runtimeSource) Me(context.Context) (mattermost.User, error) {

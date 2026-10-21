@@ -1,4 +1,4 @@
-FROM golang:1.27.2-bookworm
+FROM golang:1.27.3-bookworm
 WORKDIR /app
 ARG ORPHEUS_UID=1000
 ARG ORPHEUS_GID=1000

@@ -35,6 +35,33 @@ func TestUserEmail(t *testing.T) {
 	}
 }
 
+func TestRemoveChannelMember(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v4/channels/channel/members/bot" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Error("missing auth")
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	if err := New(server.URL, "token", time.Second).RemoveChannelMember(t.Context(), "channel", "bot"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRemoveChannelMemberError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"id":"not_found"}`, http.StatusNotFound)
+	}))
+	defer server.Close()
+	err := New(server.URL, "token", time.Second).RemoveChannelMember(t.Context(), "channel", "bot")
+	if Status(err) != http.StatusNotFound {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestThreadPaginationRequiresTimestamp(t *testing.T) {
 	calls := 0
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

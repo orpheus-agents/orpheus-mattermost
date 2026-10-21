@@ -58,6 +58,10 @@ func TestExampleAndRouting(t *testing.T) {
 	if e != nil || w.ID != "special" {
 		t.Fatal(w, e)
 	}
+	w, e = c.Route(special.IncludeIDs[0], "P")
+	if e != nil || w != nil {
+		t.Fatal("include_ids enabled a private channel without private_channels")
+	}
 }
 func TestMessageBatchWindow(t *testing.T) {
 	base := workflowText(t)
