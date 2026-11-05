@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"regexp"
 	"slices"
@@ -216,6 +217,21 @@ const maxInputMessages = 256
 
 // BuildMessages selects a deterministic prefix of triggers as separate items.
 func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.Channel, posts []mattermost.Post, snapshot Snapshot, initial bool, now time.Time) (Envelope, []InputMessage, error) {
+	return b.buildMessages(ctx, key, channel, posts, snapshot, initial, now, nil)
+}
+
+type transferredInput struct {
+	envelope Envelope
+	messages []InputMessage
+}
+
+// RebuildTransfer adds fresh context around the saved, undelivered clarification.
+// Its text and trigger identity stay frozen even if the source post changed.
+func (b Builder) RebuildTransfer(ctx context.Context, key Key, channel mattermost.Channel, posts []mattermost.Post, snapshot Snapshot, envelope Envelope, messages []InputMessage, now time.Time) (Envelope, []InputMessage, error) {
+	return b.buildMessages(ctx, key, channel, posts, snapshot, true, now, &transferredInput{envelope, messages})
+}
+
+func (b Builder) buildMessages(ctx context.Context, key Key, channel mattermost.Channel, posts []mattermost.Post, snapshot Snapshot, initial bool, now time.Time, transferred *transferredInput) (Envelope, []InputMessage, error) {
 	known, contextIDs := snapshot.Known()
 	knownVersions := map[string]Version{}
 	for _, session := range snapshot.Sessions {
@@ -235,11 +251,9 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 	existing := len(snapshot.Sessions) > 0
 	users := map[string]mattermost.User{}
 	var candidates []mattermost.Post
+	pendingTriggers := map[string]bool{}
 	for _, p := range posts {
-		if p.DeleteAt != 0 {
-			continue
-		}
-		if p.UserID == b.Bot.ID || strings.HasPrefix(p.Type, "system_") || p.CreateAt < b.Workflow.Since.UnixMilli() || known[p.ID] {
+		if p.DeleteAt != 0 || p.UserID == b.Bot.ID || strings.HasPrefix(p.Type, "system_") || p.CreateAt < b.Workflow.Since.UnixMilli() || known[p.ID] {
 			continue
 		}
 		u, ok := users[p.UserID]
@@ -252,15 +266,35 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 			users[p.UserID] = u
 		}
 		if b.Trigger(p, channel, existing, u) {
-			candidates = append(candidates, p)
+			if transferred != nil {
+				pendingTriggers[p.ID] = true
+			} else {
+				candidates = append(candidates, p)
+			}
 		}
+	}
+	frozenPosts := map[string]bool{}
+	if transferred != nil {
+		// Delivered versions may be textless same-thread references in the saved
+		// clarification. Restore their text instead of treating it as frozen.
+		for _, version := range transferred.envelope.Versions {
+			if prior, ok := knownVersions[version.ID]; !ok || prior != version {
+				frozenPosts[version.ID] = true
+			}
+		}
+		candidates = []mattermost.Post{{ID: transferred.envelope.Anchor, CreateAt: now.UnixMilli()}}
 	}
 	if len(candidates) == 0 {
 		return Envelope{}, nil, nil
 	}
 	anchor := candidates[0]
 	end := anchor.CreateAt + b.Workflow.MessageBatchWindow.Value().Milliseconds()
-	if b.Workflow.MessageBatchWindow.Value() > 0 && now.UnixMilli() < end {
+	if transferred != nil {
+		// Posts are already bounded by the fetched thread. Do not depend on
+		// connector/Mattermost clock alignment when restoring the context.
+		end = math.MaxInt64
+	}
+	if transferred == nil && b.Workflow.MessageBatchWindow.Value() > 0 && now.UnixMilli() < end {
 		return Envelope{}, nil, nil
 	}
 	var triggers []mattermost.Post
@@ -312,6 +346,9 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 			}
 			var eligible []mattermost.Post
 			for _, p := range posts {
+				if frozenPosts[p.ID] || pendingTriggers[p.ID] {
+					continue
+				}
 				if p.DeleteAt != 0 || p.CreateAt > cutoff || count < len(triggers) && (p.CreateAt == cutoff && p.ID >= triggers[count].ID) {
 					continue
 				}
@@ -328,16 +365,36 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 				e.TriggerIDs = append(e.TriggerIDs, p.ID)
 			}
 			e.Request = attachments.Request{Schema: 1, BotID: b.Bot.ID, SourceID: key.Source, ChannelID: key.Channel, RootID: key.Root, AnchorID: anchor.ID, Limits: b.Workflow.Files, Files: []attachments.InputFile{}}
+			if transferred != nil {
+				e = transferred.envelope
+				e.Revision = b.Workflow.EffectiveRevision
+				e.ContextIDs = slices.DeleteFunc(slices.Clone(e.ContextIDs), func(id string) bool { return !frozenPosts[id] })
+				e.Versions = slices.DeleteFunc(slices.Clone(e.Versions), func(v Version) bool { return !frozenPosts[v.ID] })
+				e.Request.Files = slices.Clone(e.Request.Files)
+				e.Request.PreviousIndex = ""
+				e.Request.DeliveredBatches = nil
+			}
 			seen := map[string]bool{}
 			fileSeen := map[string]bool{}
 			var messages []InputMessage
 			totalBytes := 0
+			if transferred != nil {
+				for _, version := range e.Versions {
+					seen[version.ID] = true
+				}
+				for _, file := range e.Request.Files {
+					fileSeen[file.FileID] = true
+				}
+				for _, message := range transferred.messages {
+					totalBytes += len(message.Text)
+				}
+			}
 			appendMessage := func(postID, value string) {
 				messages = append(messages, InputMessage{PostID: postID, Text: value})
 				totalBytes += len(value)
 			}
 			write := func(p mattermost.Post, origin string) error {
-				if seen[p.ID] {
+				if seen[p.ID] || pendingTriggers[p.ID] {
 					return nil
 				}
 				seen[p.ID] = true
@@ -493,6 +550,9 @@ func (b Builder) BuildMessages(ctx context.Context, key Key, channel mattermost.
 			ordered := make([]InputMessage, 0, len(messages))
 			ordered = append(ordered, messages[threadCount:]...)
 			messages = append(ordered, messages[:threadCount]...)
+			if transferred != nil {
+				messages = append(messages, transferred.messages...)
+			}
 			encoded, err := json.Marshal(struct {
 				Messages []InputMessage `json:"messages"`
 				Metadata Envelope       `json:"metadata"`

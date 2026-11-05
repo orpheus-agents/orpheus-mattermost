@@ -451,11 +451,15 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 	}
 	if run == nil {
 		if t, body, pred, ok := transfer(snapshot); ok {
-			env = t
-			env.Revision = w.EffectiveRevision
-			messages = body
+			if initial {
+				env, messages, buildErr = builder.RebuildTransfer(ctx, key, channel, posts, snapshot, t, body, time.Now())
+			} else {
+				env = t
+				env.Revision = w.EffectiveRevision
+				messages = body
+				buildErr = nil
+			}
 			predecessor = pred
-			buildErr = nil
 		}
 	}
 	e.queued(key, len(env.TriggerIDs))

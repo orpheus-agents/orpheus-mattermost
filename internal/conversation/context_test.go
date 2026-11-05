@@ -442,3 +442,69 @@ func TestPassiveFilesShrinkToTransportBudget(t *testing.T) {
 		t.Fatal("passive file history blocked required input")
 	}
 }
+
+func TestTransferRestoresReferencesAndLaterAnswerWithoutPendingTriggers(t *testing.T) {
+	b, k, source := builder(t)
+	original := mattermost.Post{ID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 1000, Message: "ORIGINAL_BODY", FileIDs: []string{id(4)}}
+	initial := Envelope{Schema: 1, Anchor: k.Root, Kind: "initial", TriggerIDs: []string{k.Root}, Versions: []Version{PostVersion(original)}, Render: Render{Version: 1, MaxChars: 12000}}
+	raw, err := json.Marshal(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := Snapshot{Sessions: []Session{{Messages: []Message{{Role: "user", Delivery: "delivered", Metadata: raw}}}}}
+	clarification := mattermost.Post{ID: id(5), RootID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 2000, Message: "@orpheus clarify https://chat.example.com/team/pl/" + k.Root}
+	source.posts[original.ID], source.posts[clarification.ID] = original, clarification
+	channel := mattermost.Channel{ID: k.Channel, Type: "O"}
+	env, messages, err := b.BuildMessages(t.Context(), k, channel, []mattermost.Post{original, clarification}, snapshot, false, time.Unix(10, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := json.Marshal(env)
+	saved, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Sessions[0].Messages = append(snapshot.Sessions[0].Messages, Message{Role: "user", Delivery: "rejected", Metadata: saved})
+	env.Predecessor = "rejected-message"
+	answer := mattermost.Post{ID: id(6), RootID: k.Root, ChannelID: k.Channel, UserID: b.Bot.ID, CreateAt: 40000, Message: "PREVIOUS_FINAL_ANSWER"}
+	next := mattermost.Post{ID: id(7), RootID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: env.WindowEnd, Message: "@orpheus NEXT_PENDING_REQUEST"}
+	passive := mattermost.Post{ID: id(9), RootID: k.Root, ChannelID: k.Channel, UserID: id(3), CreateAt: 50000, Message: "LATER_PASSIVE_CONTEXT"}
+	posts := []mattermost.Post{original, clarification, next, answer, passive}
+	got, body, err := b.RebuildTransfer(t.Context(), k, channel, posts, snapshot, env, messages, time.Unix(20, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text strings.Builder
+	for _, m := range body {
+		text.WriteString(m.Text)
+	}
+	out := text.String()
+	if !strings.Contains(out, "ORIGINAL_BODY") || !strings.Contains(out, "PREVIOUS_FINAL_ANSWER") || !strings.Contains(out, "LATER_PASSIVE_CONTEXT") || strings.Contains(out, "NEXT_PENDING_REQUEST") || len(got.Request.Files) != 1 {
+		t.Fatal("incomplete or premature context", out, got.Request)
+	}
+	if strings.Index(out, "PREVIOUS_FINAL_ANSWER") > strings.Index(out, "@orpheus clarify") {
+		t.Fatal("clarification was not last", out)
+	}
+	if len(got.TriggerIDs) != 1 || got.TriggerIDs[0] != clarification.ID || got.Predecessor != "rejected-message" {
+		t.Fatal("transfer identity changed", got)
+	}
+	// Rebuilding cannot mutate the saved envelope or accumulate attachment metadata.
+	env.Predecessor = ""
+	after, _ := json.Marshal(env)
+	if string(before) != string(after) {
+		t.Fatal("mutated saved envelope")
+	}
+	saved, _ = json.Marshal(got)
+	snapshot.Sessions = append(snapshot.Sessions, Session{Messages: []Message{{Role: "user", Delivery: "delivered", Metadata: saved}}})
+	_, following, err := b.BuildMessages(t.Context(), k, channel, posts, snapshot, false, time.Unix(30, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text.Reset()
+	for _, m := range following {
+		text.WriteString(m.Text)
+	}
+	if !strings.Contains(text.String(), "NEXT_PENDING_REQUEST") || strings.Contains(text.String(), "PREVIOUS_FINAL_ANSWER") || strings.Contains(text.String(), "LATER_PASSIVE_CONTEXT") {
+		t.Fatal("next trigger lost or context repeated", text.String())
+	}
+}

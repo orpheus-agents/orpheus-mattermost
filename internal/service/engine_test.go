@@ -82,6 +82,13 @@ func TestSessionRotationIsNotIdleBased(t *testing.T) {
 		}
 	}
 	s.Runs[0].Error = ""
+	for _, state := range []string{"deleting", "deleted", "unavailable"} {
+		s.SandboxState = state
+		if s.Reusable("v1") {
+			t.Fatal(state)
+		}
+	}
+	s.SandboxState = "paused"
 	s.TotalTokens = 100
 	if s.Reusable("v1") {
 		t.Fatal("token budget ignored")

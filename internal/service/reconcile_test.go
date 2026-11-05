@@ -294,6 +294,9 @@ func TestThreadRespectsSessionRunPolicy(t *testing.T) {
 		multiple              bool
 	}{
 		{name: "reusable", status: "completed", sandbox: "paused", multiple: true},
+		{name: "multi_deleting", status: "completed", sandbox: "deleting", multiple: true},
+		{name: "multi_deleted", status: "completed", sandbox: "deleted", multiple: true},
+		{name: "multi_unavailable", status: "completed", sandbox: "unavailable", multiple: true},
 		{name: "single_before_cleanup", status: "completed", sandbox: "ready"},
 		{name: "single_deleting", status: "completed", sandbox: "deleting"},
 		{name: "single_deleted", status: "completed", sandbox: "deleted"},
@@ -321,7 +324,7 @@ func TestThreadRespectsSessionRunPolicy(t *testing.T) {
 			}
 			got := api.submitted[1]
 			wantSession, wantRun := "", ""
-			if tc.multiple || tc.status == "running" {
+			if tc.multiple && tc.sandbox == "paused" || tc.status == "running" {
 				wantSession = sid
 			}
 			if tc.status == "running" {

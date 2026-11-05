@@ -72,6 +72,8 @@ Binary commands: `serve`, `validate`, and `healthcheck`. The embedded Python
 script handles `prepare-input`, `export-output`, and SDK `import-input`.
 File hooks upload files but never create Mattermost posts.
 
+For recovery after sandbox deletion, see [session continuation](docs/CONTINUATION.md).
+
 ## Development
 
 Docker, Compose, and Make are required. Go 1.27 and pinned checking tools run in

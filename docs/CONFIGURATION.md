@@ -188,9 +188,9 @@ without restarting the connector. Rejection notices are deduplicated by revision
 reason and input.
 
 Subsequent channel requests require a mention even when `start_on_mention=false`.
-Idle time does not close or rotate a session. Orpheus owns sandbox pauses. Budget
-exhaustion, lost sandbox/context, and revision changes can replace the session on
-the next request.
+Orpheus owns sandbox pauses and expires old paused sandboxes. Budget exhaustion,
+sandbox deletion, lost sandbox/context, and revision changes can replace the
+session on the next request. See [session continuation](CONTINUATION.md).
 
 ## Attachments and links
 

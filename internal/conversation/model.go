@@ -155,8 +155,12 @@ func (s Session) Latest() *Run {
 	return &s.Runs[len(s.Runs)-1]
 }
 func (s Session) Reusable(revision string) bool {
+	switch s.SandboxState {
+	case "unavailable", "deleting", "deleted":
+		return false
+	}
 	r := s.Latest()
-	return s.AllowMultipleRuns && s.Revision == revision && s.SandboxState != "unavailable" && s.TotalTokens < s.MaxTokens && (r == nil || (r.Error != "sandbox_lost" && r.Error != "context_lost" && r.StopReason != "token_limit"))
+	return s.AllowMultipleRuns && s.Revision == revision && s.TotalTokens < s.MaxTokens && (r == nil || (r.Error != "sandbox_lost" && r.Error != "context_lost" && r.StopReason != "token_limit"))
 }
 
 type Accepted struct {

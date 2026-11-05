@@ -37,8 +37,11 @@ Workspace files live under `.orpheus/mattermost/`:
 
 `before_run` prepares files from the accepted batch. A new run in the same session
 adds files from new messages, including passive context preceding a mention.
-Existing files and conversation history survive an idle pause. A reference to an
-older attachment verifies its cached bytes and restores a missing or changed copy;
+Existing files survive a pause until Orpheus deletes the sandbox. After deletion,
+a new session rebuilds attachments from available Mattermost sources. Files that
+existed only in the old workspace are lost. See [session continuation](CONTINUATION.md).
+A reference to an older attachment verifies its cached bytes and restores a
+missing or changed copy;
 it does not download the entire history again.
 
 The post's YAML front matter lists incoming files and their expected local paths.
