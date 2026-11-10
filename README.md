@@ -125,3 +125,8 @@ See [acceptance testing](docs/TESTING.md) for worker crash injection, offline fa
 coverage and the 1,000-thread recovery workload. A passing local suite does not
 establish compatibility with a different template or agent profile.
 Supported limits and file-error behavior are documented in [FILES.md](docs/FILES.md).
+
+## License
+
+Licensed under the GNU Affero General Public License, version 3 only
+(`AGPL-3.0-only`). See [LICENSE](LICENSE).
