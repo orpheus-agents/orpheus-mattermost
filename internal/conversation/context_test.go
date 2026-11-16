@@ -39,7 +39,7 @@ func TestTriggerPolicy(t *testing.T) {
 		{name: "public file only", channel: "O", file: true},
 		{name: "empty DM", channel: "D"},
 		{name: "system", channel: "D", message: "@orpheus", kind: "system_join_channel"},
-		{name: "own bot", channel: "D", message: "@orpheus", self: true},
+		{name: "own reply", channel: "D", message: "@orpheus", self: true},
 		{name: "foreign bot", channel: "D", message: "@orpheus", bot: true},
 		{name: "webhook", channel: "O", message: "@orpheus", webhook: true},
 		{name: "deleted", channel: "D", message: "@orpheus", deleted: true},
@@ -51,6 +51,7 @@ func TestTriggerPolicy(t *testing.T) {
 			}
 			if tc.self {
 				p.UserID = b.Bot.ID
+				p.RootID = key.Root
 			}
 			if tc.webhook {
 				p.Props = map[string]json.RawMessage{"from_webhook": json.RawMessage(`true`)}

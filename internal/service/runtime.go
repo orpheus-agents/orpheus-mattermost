@@ -113,7 +113,7 @@ func (r *Runtime) event(event mattermost.Event) {
 		r.notify()
 		return
 	}
-	if p.UserID == r.Engine.Bot.ID && !event.Deleted {
+	if p.UserID == r.Engine.Bot.ID && !event.Deleted && !conversation.SelfTrigger(p, r.Engine.Bot) {
 		return
 	}
 	ch, ok := r.channels[p.ChannelID]
@@ -135,8 +135,11 @@ func (r *Runtime) event(event mattermost.Event) {
 	r.notify()
 }
 func candidate(p mattermost.Post, ch mattermost.Channel, w config.Workflow, bot mattermost.User) bool {
-	if p.DeleteAt != 0 || p.UserID == bot.ID || strings.HasPrefix(p.Type, "system_") || p.CreateAt < w.Since.UnixMilli() {
+	if p.DeleteAt != 0 || strings.HasPrefix(p.Type, "system_") || p.CreateAt < w.Since.UnixMilli() {
 		return false
+	}
+	if p.UserID == bot.ID {
+		return conversation.SelfTrigger(p, bot)
 	}
 	if strings.TrimSpace(p.Message) == "" && len(p.FileIDs) == 0 {
 		return false

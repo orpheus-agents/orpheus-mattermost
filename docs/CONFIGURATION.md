@@ -150,10 +150,10 @@ semantic setting.
 | `services` | `[]` | Unique catalog codes passed as `configuration.sandbox.services` to the agent session |
 | `env_from` | `[]` | Worker ENV names passed as `configuration.sandbox.env_from` to the agent session |
 | `include_ids`, `exclude_ids` | `[]` | Specialized workflows reserve their channels ahead of a generic workflow; they do not opt in to private or group channels |
-| `direct_messages` | `false` | One DM owner; messages need no mention |
+| `direct_messages` | `false` | One DM owner; messages from other allowed authors need no mention |
 | `private_channels`, `group_messages` | `false` | Explicit opt-in for private/group channels |
 | `start_on_mention` | `true` | Require a mention to start a new channel thread |
-| `trigger_bot_ids` | `[]` | Allow listed external bots/webhooks; the connector's bot is always excluded |
+| `trigger_bot_ids` | `[]` | Allow listed external bots/webhooks; the connector's own bot follows the self-trigger rule below |
 | `send_commentary_messages` | `true` | Publish completed progress messages before the run finishes |
 | `draining` | `false` | Deliver accepted results without admitting new requests |
 | `message_batch_window` | `0` | Window from the first unaccepted trigger; `0` starts it immediately, so later posts are outside that batch |
@@ -165,6 +165,19 @@ semantic setting.
 | `max_session_tokens` | `100000000` | Session token budget |
 | `max_post_chars` | `12000` | Unicode code points, also capped by the server limit |
 | `initial_context_token_budget` | `100000` | Approximate context budget, with separate API/ENV byte checks |
+
+The connector accepts its own bot's posts only when `root_id` is empty and the
+message explicitly mentions the bot's current username. This rule applies in
+every channel type, including DMs, regardless of `start_on_mention` or
+`trigger_bot_ids`. Own replies inside threads never trigger a run. Accepted post
+IDs remain deduplicated across reconnects, REST replay, and restarts.
+
+A scheduled agent can post separate root messages such as `@orpheus Process task A`
+and `@orpheus Process task B` under the connector's bot account. Each root starts
+an independent session using the channel's workflow. Connector responses stay
+inside the corresponding thread. Agents can deliberately continue the chain by
+creating another root message with a mention; the root-only rule does not limit
+the length of such chains.
 
 The connector automatically leaves every joined private channel that is not
 routed to a workflow. It checks membership at startup, after configuration reload,
