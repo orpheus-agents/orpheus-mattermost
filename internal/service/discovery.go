@@ -68,7 +68,7 @@ func (r *Runtime) discover(ctx context.Context, cfg config.Config, retired []con
 	// capacity. Queue active threads only after all due counts are restored.
 	for _, window := range windows {
 		for key := range window.active {
-			if !r.discoveredJob(ctx, epoch, key, window.workflow) {
+			if !r.discoveredJob(ctx, epoch, key, window.workflow, liveWork) {
 				return false
 			}
 		}
@@ -90,7 +90,7 @@ func (r *Runtime) discover(ctx context.Context, cfg config.Config, retired []con
 				r.Logger.Error("session identity invalid")
 				return false
 			}
-			if owned && !r.discoveredJob(ctx, epoch, key, w) {
+			if owned && !r.discoveredJob(ctx, epoch, key, w, recoveryWork) {
 				return false
 			}
 		}
@@ -135,7 +135,7 @@ func (r *Runtime) discoveryKey(workflow, external string) (conversation.Key, boo
 func (r *Runtime) wakeCapacityWaiters() {
 	for _, j := range r.jobs {
 		if j.CapacityWait {
-			j.Dirty = true
+			r.request(j, liveWork)
 		}
 	}
 }

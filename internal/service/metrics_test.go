@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orpheus-agents/orpheus-mattermost/internal/conversation"
 )
@@ -55,6 +56,70 @@ func TestSuspendedThreadMetrics(t *testing.T) {
 			delete(r.jobs, second)
 			r.mu.Unlock()
 			assert(0)
+		})
+	}
+}
+
+func TestSchedulerMetrics(t *testing.T) {
+	for _, withSource := range []bool{false, true} {
+		t.Run(fmt.Sprintf("source=%v", withSource), func(t *testing.T) {
+			e, _, _, _, key := fixture(t)
+			r := &Runtime{Engine: e, jobs: map[conversation.Key]*scheduled{}, capacity: newRunCapacity()}
+			now := time.Now()
+			for i := range 4 {
+				key.Root = fmt.Sprint(i)
+				j := &scheduled{Class: liveWork, Dirty: true, QueuedAt: now.Add(-time.Second)}
+				switch i {
+				case 1:
+					j.Class = recoveryWork
+				case 2:
+					j.Retry.At = now.Add(time.Hour)
+				case 3:
+					j.Working = true
+				}
+				r.jobs[key] = j
+			}
+			r.queueWait[liveWork].observe(2 * time.Second)
+			r.queueWait[liveWork].observe(20 * time.Second)
+			r.queueWait[recoveryWork].observe(0)
+			r.queueRejections = 3
+			sources := []metricSource{{runtime: r, source: "one"}}
+			if withSource {
+				sources = append(sources, metricSource{runtime: &Runtime{Engine: e}, source: "two"})
+			}
+			rec := httptest.NewRecorder()
+			metricsHandler(sources, withSource).ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+			if rec.Code != 200 {
+				t.Fatal(rec.Code, rec.Body.String())
+			}
+			label, plain := "", ""
+			if withSource {
+				label = `,source="one"`
+				plain = `{source="one"}`
+			}
+			samples := []string{
+				fmt.Sprintf(`orpheus_mattermost_ready_threads{class="live"%s} 1`, label),
+				fmt.Sprintf(`orpheus_mattermost_ready_threads{class="recovery"%s} 1`, label),
+				fmt.Sprintf(`orpheus_mattermost_queue_wait_seconds_count{class="live"%s} 2`, label),
+				fmt.Sprintf(`orpheus_mattermost_queue_wait_seconds_sum{class="live"%s} 22`, label),
+				fmt.Sprintf(`orpheus_mattermost_queue_wait_seconds_bucket{class="live",le="5"%s} 1`, label),
+				fmt.Sprintf(`orpheus_mattermost_queue_wait_seconds_bucket{class="live",le="60"%s} 2`, label),
+				fmt.Sprintf(`orpheus_mattermost_schedule_rejections_total%s 3`, plain),
+			}
+			// Prometheus emits source before the synthetic histogram le label.
+			if withSource {
+				for i, line := range samples {
+					line = strings.ReplaceAll(line, `,le="5",source="one"`, `,source="one",le="5"`)
+					line = strings.ReplaceAll(line, `,le="60",source="one"`, `,source="one",le="60"`)
+					samples[i] = line
+				}
+				samples = append(samples, `orpheus_mattermost_ready_threads{class="live",source="two"} 0`, `orpheus_mattermost_schedule_rejections_total{source="two"} 0`)
+			}
+			for _, sample := range samples {
+				if !strings.Contains(rec.Body.String(), sample+"\n") {
+					t.Fatal("missing sample", sample, rec.Body.String())
+				}
+			}
 		})
 	}
 }

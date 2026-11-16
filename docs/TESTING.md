@@ -62,6 +62,19 @@ Mattermost rate limits, external database cost and sandbox startup; it is not a
 production SLA. Pagination is tested independently with HTTP fixtures containing
 405 sessions, runs and history messages, plus equal-timestamp Mattermost posts.
 
+## Live work during recovery
+
+`TestLiveAnswerArrivesBeforeArchiveDrains` fills recovery admission with 4,000
+historical threads and blocks all workers in archive reads. It then submits a
+fresh Mattermost question, establishes observation through the post-submit hint,
+completes the run, and publishes its answer while the archive is still blocked.
+It covers one and eight workers, with and without SSE, and duplicate notifications.
+
+Scheduler tests also cover 7:1 fairness, full use of idle workers, reserved live
+admission, promotion at the hard limit, coalescing, retry eligibility, active polls,
+initial versus subsequent channel replay, and per-source queue metrics. Existing
+restart, permanent-failure and reload tests continue to exercise delivery safety.
+
 ## Fault coverage
 
 | Behavior | Regression tests |

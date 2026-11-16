@@ -275,8 +275,29 @@ admission. Reload cancels the obsolete scan and starts fresh accounting.
 Periodic discovery adds found work without clearing local reservations or tracked
 runs outside the window. Subsequent thread observations release completed work
 and resolve uncertain admissions. A slow or failed archive read cannot invalidate
-already restored capacity. Recovery still shares the `MAX_PARALLEL_THREADS`
-worker pool, so a delivery backlog can delay thread processing.
+already restored capacity.
+
+Thread scheduling uses two classes in the same `MAX_PARALLEL_THREADS` pool:
+
+- `live`: Mattermost events, Orpheus notifications, post-submit observation,
+  active-run polling, batch deadlines, capacity wakeups, and changes found by
+  subsequent channel replays.
+- `recovery`: session history discovery and the first replay of a channel.
+
+A live event promotes an already queued recovery thread. Repeated events coalesce;
+notifications arriving during a pass remain pending for its next pass. Each class
+preserves FIFO order. When both classes are runnable, the scheduler starts one
+recovery pass after seven live passes. Either class can use all workers when the
+other has no runnable work. This ratio counts starts, not execution time. Running
+passes are never preempted, and retry delays and permanent suspensions still apply.
+
+At most 4,096 threads are tracked per connection. Recovery admission waits once
+3,584 threads are tracked, leaving 512 places for live work. Existing threads can
+still be promoted at the overall limit; no queued recovery work is evicted. A new
+live notification rejected at the overall limit increments
+`orpheus_mattermost_schedule_rejections_total`. Persisted history can rediscover
+that work. These limits and the 7:1 scheduling policy are fixed connector policy.
+Priority applies only after discovery; it does not shorten channel/session scans.
 
 The window applies only to finding threads. Each selected thread still loads all
 session generations, runs and messages. An old session with a recent run is
@@ -293,6 +314,19 @@ last success, replay lag, pending inputs/outputs, and age of the oldest uncertai
 admission. Queue gauges describe the last reconciliation,
 not an instantaneous Mattermost snapshot. JSON logs contain identifiers and error
 classes, without message bodies or credentials.
+
+Scheduler metrics supplement these existing observations:
+
+- `orpheus_mattermost_ready_threads{class="live|recovery"}` counts runnable threads
+  waiting for a worker, excluding running passes, future polls and retry backoff.
+- `orpheus_mattermost_queue_wait_seconds{class="live|recovery"}` is a histogram of
+  runnable waiting time, sampled at dispatch. Promotion starts a live wait;
+  backoff and the remaining time of an in-flight pass are excluded. It does not
+  measure the time between an Orpheus answer and its Mattermost publication.
+- `orpheus_mattermost_schedule_rejections_total` counts live notifications for new
+  threads that could not enter the full queue. Discovery waits instead of rejecting.
+
+The manager adds the same `source` label as on existing connector metrics.
 
 Permanent POST failures and receipt conflicts suspend retries for that thread;
 run state remains observed, releasing capacity when no active run remains.

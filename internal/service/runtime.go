@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,12 +30,13 @@ type scheduled struct {
 	Workflow                     config.Workflow
 	Working, Dirty, CapacityWait bool
 	Order                        uint64
+	Class                        workClass
+	QueuedAt                     time.Time
 	Next                         time.Time
 	Retry                        retry
 }
 
 const (
-	maxQueuedThreads          = 4096
 	startupDiscoveryLookback  = 21 * 24 * time.Hour
 	periodicDiscoveryLookback = 7 * 24 * time.Hour
 	periodicChannelLookback   = 7 * 24 * time.Hour
@@ -54,6 +54,9 @@ type Runtime struct {
 	jobs                                           map[conversation.Key]*scheduled
 	channels                                       map[string]mattermost.Channel
 	capacity                                       runCapacity
+	scheduler                                      threadScheduler
+	queueWait                                      [workClasses]queueWaitStats
+	queueRejections                                uint64
 	watchers                                       map[string]context.CancelFunc
 	watchKeys                                      map[string]conversation.Key
 	retired                                        map[string]config.Workflow
@@ -76,27 +79,33 @@ func (r *Runtime) notify() {
 }
 
 // enqueue requires mu. Events coalesce while a thread is already running.
-func (r *Runtime) enqueue(key conversation.Key, w config.Workflow) bool {
+func (r *Runtime) enqueue(key conversation.Key, w config.Workflow, class workClass) bool {
+	if r.capacity.count(key) > 0 {
+		class = liveWork
+	}
 	if j := r.jobs[key]; j != nil {
-		j.Dirty = true
+		r.request(j, class)
 		return true
 	}
-	if len(r.jobs) >= maxQueuedThreads {
+	if !queueHasRoom(len(r.jobs), class) {
 		r.scanAt = time.Time{}
 		return false
 	}
-	r.sequence++
-	r.jobs[key] = &scheduled{Workflow: w, Dirty: true, Order: r.sequence}
+	j := &scheduled{Workflow: w}
+	r.request(j, class)
+	r.jobs[key] = j
 	return true
 }
 func (r *Runtime) hint(key conversation.Key) {
 	r.mu.Lock()
 	if j := r.jobs[key]; j != nil {
-		j.Dirty = true
+		r.request(j, liveWork)
 	} else {
 		for _, w := range r.cfg.Workflows {
 			if w.ID == key.Workflow {
-				r.enqueue(key, w)
+				if !r.enqueue(key, w, liveWork) {
+					r.queueRejections++
+				}
 				break
 			}
 		}
@@ -131,7 +140,9 @@ func (r *Runtime) event(event mattermost.Event) {
 	if r.jobs[key] == nil && r.capacity.count(key) == 0 && !event.Deleted && !candidate(p, ch, *w, r.Engine.Bot) {
 		return
 	}
-	r.enqueue(key, *w)
+	if !r.enqueue(key, *w, liveWork) {
+		r.queueRejections++
+	}
 	r.notify()
 }
 func candidate(p mattermost.Post, ch mattermost.Channel, w config.Workflow, bot mattermost.User) bool {
@@ -264,7 +275,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 				r.digests = map[conversation.Key]string{}
 				for _, j := range r.jobs {
 					j.Retry = retry{}
-					j.Dirty = true
+					r.request(j, j.Class)
 					if j.Cancel != nil {
 						j.Cancel()
 					}
@@ -289,25 +300,12 @@ func (r *Runtime) Run(ctx context.Context) error {
 			r.scanCancel = cancelScan
 			wg.Go(func() { defer cancelScan(); r.scan(scanCtx, cfg, retired, epoch) })
 		}
-		// Ordered dispatch prevents a noisy thread from monopolizing the worker pool.
-		keys := make([]conversation.Key, 0, len(r.jobs))
-		for key, j := range r.jobs {
-			poll := !j.Retry.Permanent || r.capacity.count(key) > 0
-			if !j.Working && !time.Now().Before(j.Retry.At) && (j.Dirty || poll && !time.Now().Before(j.Next)) {
-				keys = append(keys, key)
-			}
-		}
-		slices.SortFunc(keys, func(a, b conversation.Key) int {
-			if r.jobs[a].Order < r.jobs[b].Order {
-				return -1
-			}
-			return 1
-		})
-		for _, key := range keys {
-			if r.running >= r.cfg.MaxParallelThreads {
-				break
-			}
+		now := time.Now()
+		for _, item := range r.scheduler.take(r.runnable(now), r.cfg.MaxParallelThreads-r.running) {
+			key := item.key
+			r.queueWait[item.class].observe(now.Sub(item.since))
 			j := r.jobs[key]
+			j.Class = item.class
 			j.Working = true
 			j.Dirty = false
 			j.CapacityWait = false
@@ -365,9 +363,16 @@ func (r *Runtime) work(ctx, watchCtx context.Context, wg *sync.WaitGroup, key co
 	j.Working = false
 	j.Cancel = nil
 	r.running--
-	r.sequence++
-	j.Order = r.sequence
-	j.Next = time.Now().Add(w.PollInterval.Value())
+	if !j.Dirty {
+		r.sequence++
+		j.Order = r.sequence
+	}
+	finished := time.Now()
+	j.Next = finished.Add(w.PollInterval.Value())
+	if j.Dirty {
+		// A notification during work becomes runnable only after this pass.
+		j.QueuedAt = finished
+	}
 	if err != nil && ctx.Err() == nil {
 		r.failures.Add(1)
 		r.Logger.Error("thread reconciliation failed", "workflow", key.Workflow, "channel", key.Channel, "root", key.Root, "class", errorClass(err))
@@ -382,7 +387,7 @@ func (r *Runtime) work(ctx, watchCtx context.Context, wg *sync.WaitGroup, key co
 			j.Retry.Permanent = true
 		}
 		j.Retry.At = time.Now().Add(delay)
-		j.Dirty = true
+		r.request(j, j.Class)
 	} else if err == nil {
 		j.Retry = retry{Permanent: j.Retry.Permanent}
 		r.lastSuccess.Store(time.Now().Unix())
@@ -402,7 +407,7 @@ func (r *Runtime) observe(ctx context.Context, wg *sync.WaitGroup, key conversat
 	// Discovery may have found active work after this snapshot began. Read
 	// again before releasing its capacity or submitting from stale history.
 	if r.capacity.versions[key.Workflow] != capacityVersion {
-		r.jobs[key].Dirty = true
+		r.request(r.jobs[key], r.jobs[key].Class)
 		return false
 	}
 	count := 0
@@ -453,14 +458,14 @@ func (r *Runtime) observe(ctx context.Context, wg *sync.WaitGroup, key conversat
 
 // A single discovery goroutine runs independently of thread workers. Its bounded
 // queue can apply backpressure without blocking unrelated thread notifications.
-func (r *Runtime) discoveredJob(ctx context.Context, epoch uint64, key conversation.Key, w config.Workflow) bool {
+func (r *Runtime) discoveredJob(ctx context.Context, epoch uint64, key conversation.Key, w config.Workflow, class workClass) bool {
 	for ctx.Err() == nil {
 		r.mu.Lock()
 		if epoch != r.epoch {
 			r.mu.Unlock()
 			return false
 		}
-		ok := r.enqueue(key, w)
+		ok := r.enqueue(key, w, class)
 		r.mu.Unlock()
 		r.notify()
 		if ok {
@@ -492,7 +497,7 @@ func (r *Runtime) scan(ctx context.Context, cfg config.Config, retired []config.
 			r.ready.Store(success)
 			for _, j := range r.jobs {
 				if j.CapacityWait {
-					j.Dirty = true
+					r.request(j, j.Class)
 				}
 			}
 		}
@@ -523,7 +528,7 @@ func (r *Runtime) scan(ctx context.Context, cfg config.Config, retired []config.
 		old, had := r.channels[key.Channel]
 		current, has := channelMap[key.Channel]
 		if had != has || old.Type != current.Type {
-			j.Dirty = true
+			r.request(j, liveWork)
 			if j.Cancel != nil {
 				j.Cancel()
 			}
@@ -580,7 +585,11 @@ func (r *Runtime) scan(ctx context.Context, cfg config.Config, retired []config.
 			if !changed || !relevant {
 				continue
 			}
-			if !r.discoveredJob(ctx, epoch, key, *w) {
+			class := recoveryWork
+			if !lastScan.IsZero() {
+				class = liveWork
+			}
+			if !r.discoveredJob(ctx, epoch, key, *w, class) {
 				return
 			}
 			r.mu.Lock()

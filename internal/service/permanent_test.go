@@ -192,7 +192,7 @@ func TestPermanentThreadObservationRetainsRunCapacity(t *testing.T) {
 	api.mu.Lock()
 	api.snapshots[key].Sessions[0].Runs[0].Status = "completed"
 	api.mu.Unlock()
-	if !r.discoveredJob(t.Context(), r.epoch, key, w) || r.reserve(fresh, w) {
+	if !r.discoveredJob(t.Context(), r.epoch, key, w, recoveryWork) || r.reserve(fresh, w) {
 		t.Fatal("rediscovery admitted work before observing the session")
 	}
 	runThreadWork(t, r, &wg, key)
