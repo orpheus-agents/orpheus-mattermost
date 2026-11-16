@@ -157,6 +157,67 @@ func TestChannelPaginationPreservesEqualTimestamps(t *testing.T) {
 	}
 }
 
+func TestChannelPaginationStopsAtCreationBoundary(t *testing.T) {
+	for _, failSecondPage := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failed_page=%v", failSecondPage), func(t *testing.T) {
+			cutoff := time.Now().Add(-7 * 24 * time.Hour).Truncate(time.Millisecond)
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				q := r.URL.Query()
+				if q.Get("per_page") != "200" || q.Get("skipFetchThreads") != "true" || q.Has("since") || q.Has("before") {
+					t.Error("unexpected channel pagination", r.URL.RawQuery)
+				}
+				page := q.Get("page")
+				if page != "0" && page != "1" {
+					t.Error("read a page beyond the creation-time boundary", page)
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				if page == "1" && failSecondPage {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				result := PostList{Posts: map[string]Post{}}
+				for i := range 200 {
+					id := fmt.Sprintf("%s%025d", page, i)
+					post := Post{ID: id, ChannelID: "ch", CreateAt: cutoff.Add(time.Hour).UnixMilli()}
+					if page == "1" {
+						post.CreateAt = cutoff.UnixMilli()
+						if i >= 2 {
+							post.CreateAt--
+							post.EditAt = time.Now().UnixMilli() // A fresh edit cannot move an old post into the window.
+						}
+					}
+					result.Order = append(result.Order, id)
+					result.Posts[id] = post
+				}
+				_ = json.NewEncoder(w).Encode(result)
+			}))
+			defer server.Close()
+			client := New(server.URL, "token", time.Second)
+			posts, err := client.Posts(t.Context(), "ch", cutoff)
+			if calls != 2 {
+				t.Fatal("expected exactly two pages", calls)
+			}
+			if failSecondPage {
+				if err == nil || len(posts) != 0 {
+					t.Fatal("partial channel history was accepted", len(posts), err)
+				}
+				return
+			}
+			if err != nil || len(posts) != 202 {
+				t.Fatal("boundary posts were skipped or old posts included", len(posts), err)
+			}
+			for _, p := range posts {
+				if p.CreateAt < cutoff.UnixMilli() {
+					t.Fatal("old edited post entered replay", p)
+				}
+			}
+		})
+	}
+}
+
 func TestWebSocketAuthenticationAndHint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)

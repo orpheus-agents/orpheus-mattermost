@@ -229,10 +229,10 @@ func values(page PostList) []Post {
 	return v
 }
 
-// Posts walks all pages from the fixed replay boundary. Mattermost's before=
+// Posts walks pages down to the caller's inclusive creation-time boundary. Mattermost's before=
 // filter compares only timestamps and permanently skips ties at page boundaries.
-// Offset pages can shift during concurrent writes; the next complete replay
-// covers those shifts, while per-post admission keys suppress duplicates.
+// Offset pages can shift during concurrent writes; later replays revisit posts
+// still inside their window, while per-post admission keys suppress duplicates.
 func (c *Client) Posts(ctx context.Context, channel string, since time.Time) ([]Post, error) {
 	seen := map[string]bool{}
 	var result []Post
