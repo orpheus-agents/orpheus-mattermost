@@ -120,3 +120,62 @@ func TestSelfRootTasksThroughWebSocketAndReplay(t *testing.T) {
 		})
 	}
 }
+
+func TestSelfRootContinuationAfterSandboxLoss(t *testing.T) {
+	for _, transfer := range []bool{false, true} {
+		t.Run(map[bool]string{false: "human follow-up", true: "rejected clarification transfer"}[transfer], func(t *testing.T) {
+			e, api, mm, _, key := fixture(t)
+			w := e.Config.Workflows[0]
+			channel := mattermost.Channel{ID: key.Channel, Type: "O"}
+			mm.posts[0].UserID = e.Bot.ID
+			mm.posts[0].FileIDs = []string{"ffffffffffffffffffffffffff"}
+			if err := e.Thread(t.Context(), w, key, channel, true); err != nil {
+				t.Fatal(err)
+			}
+			old := &api.snapshot.Sessions[0]
+			predecessor := old.Runs[0].ID
+			reply := mattermost.Post{ID: "ssssssssssssssssssssssssss", RootID: key.Root, ChannelID: key.Channel, UserID: "hhhhhhhhhhhhhhhhhhhhhhhhhh", CreateAt: 4000, Message: "@orpheus HUMAN_FOLLOW_UP", FileIDs: []string{"gggggggggggggggggggggggggg"}}
+			mm.posts = append(mm.posts, reply)
+			if transfer {
+				if err := e.Thread(t.Context(), w, key, channel, true); err != nil {
+					t.Fatal(err)
+				}
+				if len(api.submitted) != 2 || api.submitted[1].Envelope.Kind != "clarification" {
+					t.Fatal("human follow-up was not submitted to the active run")
+				}
+				clarification := &old.Messages[len(old.Messages)-1]
+				clarification.Delivery, clarification.Error = "rejected", "run_finished_before_delivery"
+				predecessor = clarification.ID
+				mm.posts[1].Message = "@orpheus EDITED_FOLLOW_UP"
+			}
+			old.Runs[0].Status = "completed"
+			old.SandboxState = "deleted"
+			mm.posts = append(mm.posts, mattermost.Post{ID: "tttttttttttttttttttttttttt", RootID: key.Root, ChannelID: key.Channel, UserID: e.Bot.ID, CreateAt: 3000, Message: "@orpheus BOT_ANSWER"})
+			mattermost.Sort(mm.posts)
+			e = &Engine{Config: e.Config, MM: mm, API: api, Bot: e.Bot}
+			before := len(api.submitted)
+			if err := e.Thread(t.Context(), w, key, channel, true); err != nil {
+				t.Fatal(err)
+			}
+			if len(api.submitted) != before+1 || len(api.snapshot.Sessions) != 2 {
+				t.Fatal("follow-up did not start a new session")
+			}
+			got := api.submitted[before]
+			if got.Session != "" || got.Predecessor != predecessor || got.Envelope.Request.PreviousIndex != "" || !slices.Equal(got.Envelope.TriggerIDs, []string{reply.ID}) {
+				t.Fatal("invalid continuation or self-root retriggered", got)
+			}
+			body := joinedInput(got.Messages)
+			if !strings.Contains(body, "ORIGINAL_REQUEST_BODY") || !strings.Contains(body, "HUMAN_FOLLOW_UP") || strings.Contains(body, "EDITED_FOLLOW_UP") || len(got.Envelope.Request.Files) != 2 {
+				t.Fatal("self-root context, frozen follow-up or attachments lost", body, got.Envelope.Request)
+			}
+			for range 2 {
+				if err := e.Thread(t.Context(), w, key, channel, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(api.submitted) != before+1 {
+				t.Fatal("continuation was duplicated")
+			}
+		})
+	}
+}
