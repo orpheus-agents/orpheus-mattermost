@@ -114,9 +114,17 @@ type fileReference struct {
 	Status string `json:"status,omitempty"`
 }
 
+// SelfTrigger allows explicit tasks from the bot, but never its thread replies.
+func SelfTrigger(p mattermost.Post, bot mattermost.User) bool {
+	return p.UserID == bot.ID && p.RootID == "" && Mention(p.Message, []string{bot.Username})
+}
+
 func (b Builder) Trigger(p mattermost.Post, channel mattermost.Channel, existing bool, user mattermost.User) bool {
-	if p.DeleteAt != 0 || p.UserID == b.Bot.ID || strings.HasPrefix(p.Type, "system_") || p.Type == "system_ephemeral" {
+	if p.DeleteAt != 0 || strings.HasPrefix(p.Type, "system_") || p.Type == "system_ephemeral" {
 		return false
+	}
+	if p.UserID == b.Bot.ID {
+		return SelfTrigger(p, b.Bot)
 	}
 	if (user.IsBot || p.Props["from_webhook"] != nil) && !slices.Contains(b.Workflow.TriggerBotIDs, p.UserID) {
 		return false
@@ -253,7 +261,7 @@ func (b Builder) buildMessages(ctx context.Context, key Key, channel mattermost.
 	var candidates []mattermost.Post
 	pendingTriggers := map[string]bool{}
 	for _, p := range posts {
-		if p.DeleteAt != 0 || p.UserID == b.Bot.ID || strings.HasPrefix(p.Type, "system_") || p.CreateAt < b.Workflow.Since.UnixMilli() || known[p.ID] {
+		if p.DeleteAt != 0 || p.UserID == b.Bot.ID && !SelfTrigger(p, b.Bot) || strings.HasPrefix(p.Type, "system_") || p.CreateAt < b.Workflow.Since.UnixMilli() || known[p.ID] {
 			continue
 		}
 		u, ok := users[p.UserID]
@@ -352,7 +360,7 @@ func (b Builder) buildMessages(ctx context.Context, key Key, channel mattermost.
 				if p.DeleteAt != 0 || p.CreateAt > cutoff || count < len(triggers) && (p.CreateAt == cutoff && p.ID >= triggers[count].ID) {
 					continue
 				}
-				if !initial && p.UserID == b.Bot.ID {
+				if !initial && p.UserID == b.Bot.ID && !mandatory[p.ID] {
 					continue
 				}
 				if initial || !contextIDs[p.ID] || mandatory[p.ID] {
