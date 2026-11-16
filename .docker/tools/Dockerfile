@@ -1,6 +1,6 @@
 FROM hadolint/hadolint:v2.15.1 AS hadolint
 FROM aquasec/trivy:0.74.0 AS trivy
-FROM golang:1.27.3-bookworm
+FROM golang:1.27.4-bookworm
 COPY --from=hadolint /bin/hadolint /usr/local/bin/hadolint
 COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
