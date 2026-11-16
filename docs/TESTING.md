@@ -77,6 +77,7 @@ production SLA. Pagination is tested independently with HTTP fixtures containing
 | Same-thread references, far linked target, cross-channel links, bot/Markdown triggers and budgets | `conversation/context_test.go`, `config/config_test.go` |
 | Pagination, SSE cursor recovery, redirects and stream limits | `orpheus/client_test.go`, `mattermost/client_test.go` |
 | Startup/periodic discovery windows, failed-scan retries, retained tracked work, fixed pagination bounds and complete thread snapshots | `service/discovery_test.go`, `orpheus/discovery_test.go`, `orpheus/client_test.go` |
+| Active-run accounting independent of blocked recovery, workflow/source isolation, full queues, reload, stale snapshots and in-flight/lost-response reservations | `service/capacity_test.go`, `service/capacity_discovery_test.go` |
 | Per-channel startup/periodic replay windows, failed retries, reload, creation-time boundaries and fresh replies with old thread context | `service/channel_replay_test.go`, `mattermost/client_test.go` |
 
 Exactly-once publication across two independent APIs is not guaranteed. If a POST

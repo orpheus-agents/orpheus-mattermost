@@ -18,7 +18,7 @@ import (
 )
 
 func TestPaginationBeyond200Items(t *testing.T) {
-	for _, kind := range []string{"sessions", "discovery", "runs", "history"} {
+	for _, kind := range []string{"sessions", "discovery", "active", "runs", "history"} {
 		t.Run(kind, func(t *testing.T) {
 			sid, rid := uuid.NewString(), uuid.NewString()
 			to := time.Date(2026, time.November, 16, 12, 0, 0, 0, time.UTC)
@@ -37,9 +37,9 @@ func TestPaginationBeyond200Items(t *testing.T) {
 				if r.URL.Query().Get("limit") != "200" || offset != (pages-1)*200 {
 					t.Error("unexpected pagination", r.URL.RawQuery)
 				}
-				if kind == "discovery" {
+				if kind == "discovery" || kind == "active" {
 					q := r.URL.Query()
-					if q.Get("namespace") != "mattermost/assistant" || q.Get("last_run_created_from") != from.Format(time.RFC3339Nano) || q.Get("last_run_created_to") != to.Format(time.RFC3339Nano) || q.Has("external_key") || q.Has("activity") {
+					if q.Get("namespace") != "mattermost/assistant" || q.Get("last_run_created_from") != from.Format(time.RFC3339Nano) || q.Get("last_run_created_to") != to.Format(time.RFC3339Nano) || q.Has("external_key") || (kind == "active" && q.Get("activity") != "active") || (kind == "discovery" && q.Has("activity")) {
 						t.Error("discovery window or namespace changed between pages", r.URL.RawQuery)
 					}
 				}
@@ -48,9 +48,9 @@ func TestPaginationBeyond200Items(t *testing.T) {
 					id := uuid.NewSHA1(uuid.Nil, []byte(strconv.Itoa(i))).String()
 					var item any
 					switch kind {
-					case "sessions", "discovery":
+					case "sessions", "discovery", "active":
 						// Even sessions created years ago can have a run at the inclusive lower bound.
-						item = map[string]any{"id": id, "allow_multiple_runs": i%2 == 0, "namespace": "mattermost/assistant", "created_at": time.Unix(1, 0), "last_run_created_at": from, "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 100}}}
+						item = map[string]any{"id": id, "allow_multiple_runs": i%2 == 0, "namespace": "mattermost/assistant", "created_at": time.Unix(1, 0), "last_run_created_at": from, "active_run_id": id, "external_key": "thread-" + id, "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 100}}}
 					case "runs":
 						item = map[string]any{"id": id, "session_id": sid, "number": i + 1, "status": "completed"}
 					case "history":
@@ -88,6 +88,15 @@ func TestPaginationBeyond200Items(t *testing.T) {
 						t.Fatal("session creation time changed", item.CreatedAt)
 					}
 					ids = append(ids, item.ID)
+				}
+			case "active":
+				items, e := client.ActiveRuns(t.Context(), "mattermost/assistant", from, to)
+				err = e
+				for _, item := range items {
+					if item.RunID != item.SessionID || item.ExternalKey != "thread-"+item.SessionID {
+						t.Fatal("active run reference was not preserved", item)
+					}
+					ids = append(ids, item.SessionID)
 				}
 			case "runs":
 				items, e := client.Runs(t.Context(), sid)

@@ -168,6 +168,14 @@ type Accepted struct {
 	RunID     string
 	MessageID string
 }
+
+// ActiveRun identifies unfinished work without loading conversation history.
+type ActiveRun struct {
+	SessionID   string
+	RunID       string
+	ExternalKey string
+}
+
 type Snapshot struct{ Sessions []Session }
 
 // Accepted and context are separate: linked/passive context cannot consume a trigger.

@@ -53,8 +53,7 @@ type Runtime struct {
 	cfg                                            config.Config
 	jobs                                           map[conversation.Key]*scheduled
 	channels                                       map[string]mattermost.Channel
-	active                                         map[conversation.Key]int
-	unknown                                        map[conversation.Key]bool
+	capacity                                       runCapacity
 	watchers                                       map[string]context.CancelFunc
 	watchKeys                                      map[string]conversation.Key
 	retired                                        map[string]config.Workflow
@@ -64,8 +63,9 @@ type Runtime struct {
 	wake                                           chan struct{}
 	sequence, epoch                                uint64
 	running                                        int
-	scanning, discovering, initialized             bool
+	scanning                                       bool
 	scanAt                                         time.Time
+	scanCancel                                     context.CancelFunc
 }
 
 func (r *Runtime) notify() {
@@ -128,7 +128,7 @@ func (r *Runtime) event(event mattermost.Event) {
 	}
 	key := conversation.Key{Source: r.Engine.SourceID, Workflow: w.ID, Channel: ch.ID, Root: p.Root()}
 	// Passive posts only need immediate work in an already observed thread.
-	if r.jobs[key] == nil && r.active[key] == 0 && !event.Deleted && !candidate(p, ch, *w, r.Engine.Bot) {
+	if r.jobs[key] == nil && r.capacity.count(key) == 0 && !event.Deleted && !candidate(p, ch, *w, r.Engine.Bot) {
 		return
 	}
 	r.enqueue(key, *w)
@@ -196,8 +196,7 @@ func (r *Runtime) Run(ctx context.Context) error {
 	r.wake = make(chan struct{}, 1)
 	r.jobs = map[conversation.Key]*scheduled{}
 	r.channels = map[string]mattermost.Channel{}
-	r.active = map[conversation.Key]int{}
-	r.unknown = map[conversation.Key]bool{}
+	r.capacity = newRunCapacity()
 	r.watchers = map[string]context.CancelFunc{}
 	r.watchKeys = map[string]conversation.Key{}
 	r.retired = map[string]config.Workflow{}
@@ -252,6 +251,10 @@ func (r *Runtime) Run(ctx context.Context) error {
 				r.Engine.limitPosts(&cfg)
 				r.cfg = cfg
 				r.epoch++
+				clear(r.capacity.ready)
+				if r.scanCancel != nil {
+					r.scanCancel()
+				}
 				r.scanAt = time.Time{}
 				r.scanned = map[string]time.Time{}
 				r.discovered = map[string]time.Time{}
@@ -274,18 +277,19 @@ func (r *Runtime) Run(ctx context.Context) error {
 		r.mu.Lock()
 		if !r.scanning && !time.Now().Before(r.scanAt) {
 			r.scanning = true
-			r.discovering = true
 			cfg, epoch := r.cfg, r.epoch
 			retired := make([]config.Workflow, 0, len(r.retired))
 			for _, w := range r.retired {
 				retired = append(retired, w)
 			}
-			wg.Go(func() { r.scan(ctx, cfg, retired, epoch) })
+			scanCtx, cancelScan := context.WithCancel(ctx)
+			r.scanCancel = cancelScan
+			wg.Go(func() { defer cancelScan(); r.scan(scanCtx, cfg, retired, epoch) })
 		}
 		// Ordered dispatch prevents a noisy thread from monopolizing the worker pool.
 		keys := make([]conversation.Key, 0, len(r.jobs))
 		for key, j := range r.jobs {
-			poll := !j.Retry.Permanent || r.active[key] > 0
+			poll := !j.Retry.Permanent || r.capacity.count(key) > 0
 			if !j.Working && !time.Now().Before(j.Retry.At) && (j.Dirty || poll && !time.Now().Before(j.Next)) {
 				keys = append(keys, key)
 			}
@@ -327,26 +331,13 @@ func (r *Runtime) Run(ctx context.Context) error {
 func (r *Runtime) reserve(key conversation.Key, w config.Workflow) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	// Complete discovery first, so unobserved sessions cannot evade the run limit.
-	blocked := !r.initialized || r.discovering
-	count := 0
-	for k, n := range r.active {
-		if k.Workflow == w.ID {
-			count += n
-		}
-	}
-	for k := range r.unknown {
-		if k.Workflow == w.ID {
-			blocked = true
-		}
-	}
-	if blocked || count >= w.MaxConcurrentRuns {
+	if !r.capacity.reserve(key, w.MaxConcurrentRuns) {
 		if j := r.jobs[key]; j != nil {
 			j.CapacityWait = true
 		}
 		return false
 	}
-	r.active[key] = 1 // Hold capacity even when the admission response is lost.
+	r.activeRuns.Store(int64(r.capacity.total()))
 	return true
 }
 
@@ -354,11 +345,12 @@ func (r *Runtime) work(ctx, watchCtx context.Context, wg *sync.WaitGroup, key co
 	started := time.Now()
 	r.mu.Lock()
 	permanent := r.jobs[key].Retry.Permanent
+	capacityVersion := r.capacity.versions[key.Workflow]
 	r.mu.Unlock()
 	snapshot, err := r.Engine.API.Snapshot(ctx, key)
 	if err == nil {
-		r.observe(watchCtx, wg, key, snapshot)
-		if !permanent {
+		observed := r.observe(watchCtx, wg, key, snapshot, capacityVersion)
+		if observed && !permanent {
 			err = r.Engine.reconcile(ctx, w, key, ch, inScope, snapshot)
 		}
 	}
@@ -395,24 +387,27 @@ func (r *Runtime) work(ctx, watchCtx context.Context, wg *sync.WaitGroup, key co
 		pending := r.Engine.inputQueue[key] > 0
 		_, frozen := r.Engine.pending[key]
 		r.Engine.mu.Unlock()
-		if !j.Retry.Permanent && !j.Dirty && !pending && !frozen && r.active[key] == 0 {
+		if !j.Retry.Permanent && !j.Dirty && !pending && !frozen && r.capacity.count(key) == 0 {
 			delete(r.jobs, key)
 		}
 	}
 	r.notify()
 }
-func (r *Runtime) observe(ctx context.Context, wg *sync.WaitGroup, key conversation.Key, snapshot conversation.Snapshot) {
+func (r *Runtime) observe(ctx context.Context, wg *sync.WaitGroup, key conversation.Key, snapshot conversation.Snapshot, capacityVersion uint64) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	wasUnknown := r.unknown[key]
-	delete(r.unknown, key)
-	old := r.active[key]
-	delete(r.active, key)
+	// Discovery may have found active work after this snapshot began. Read
+	// again before releasing its capacity or submitting from stale history.
+	if r.capacity.versions[key.Workflow] != capacityVersion {
+		r.jobs[key].Dirty = true
+		return false
+	}
+	count := 0
 	watching := map[string]bool{}
 	for _, s := range snapshot.Sessions {
 		for _, run := range s.Runs {
 			if !run.Terminal() {
-				r.active[key]++
+				count++
 				watching[s.ID] = true
 			}
 		}
@@ -446,23 +441,16 @@ func (r *Runtime) observe(ctx context.Context, wg *sync.WaitGroup, key conversat
 			delete(r.watchKeys, sid)
 		}
 	}
-	if old > r.active[key] || wasUnknown && len(r.unknown) == 0 {
-		for _, j := range r.jobs {
-			if j.CapacityWait {
-				j.Dirty = true
-			}
-		}
+	if r.capacity.observe(key, count) {
+		r.wakeCapacityWaiters()
 	}
-	total := 0
-	for _, n := range r.active {
-		total += n
-	}
-	r.activeRuns.Store(int64(total))
+	r.activeRuns.Store(int64(r.capacity.total()))
+	return true
 }
 
 // A single discovery goroutine runs independently of thread workers. Its bounded
 // queue can apply backpressure without blocking unrelated thread notifications.
-func (r *Runtime) discoveredJob(ctx context.Context, epoch uint64, key conversation.Key, w config.Workflow, unknown bool) bool {
+func (r *Runtime) discoveredJob(ctx context.Context, epoch uint64, key conversation.Key, w config.Workflow) bool {
 	for ctx.Err() == nil {
 		r.mu.Lock()
 		if epoch != r.epoch {
@@ -470,9 +458,6 @@ func (r *Runtime) discoveredJob(ctx context.Context, epoch uint64, key conversat
 			return false
 		}
 		ok := r.enqueue(key, w)
-		if ok && unknown {
-			r.unknown[key] = true
-		}
 		r.mu.Unlock()
 		r.notify()
 		if ok {
@@ -491,9 +476,8 @@ func (r *Runtime) scan(ctx context.Context, cfg config.Config, retired []config.
 	defer func() {
 		r.mu.Lock()
 		r.scanning = false
-		r.discovering = false
+		r.scanCancel = nil
 		if epoch == r.epoch {
-			r.initialized = success
 			interval := 30 * time.Second
 			for _, w := range cfg.Workflows {
 				interval = min(interval, w.PollInterval.Value())
@@ -544,58 +528,9 @@ func (r *Runtime) scan(ctx context.Context, cfg config.Config, retired []config.
 	}
 	r.channels = channelMap
 	r.mu.Unlock()
-	// Register existing sessions before admitting new runs.
-	workflows := append(slices.Clone(cfg.Workflows), retired...)
-	for _, w := range workflows {
-		r.mu.Lock()
-		lastDiscovery := r.discovered[w.ID]
-		r.mu.Unlock()
-		if time.Since(lastDiscovery) < w.FullReconcileInterval.Value() {
-			continue
-		}
-		lookback := periodicDiscoveryLookback
-		if lastDiscovery.IsZero() {
-			lookback = startupDiscoveryLookback
-		}
-		to := time.Now().UTC()
-		sessions, err := r.Engine.API.DiscoverSessions(ctx, "mattermost/"+w.ID, to.Add(-lookback), to)
-		if err != nil {
-			r.Logger.Error("session discovery failed", "class", errorClass(err))
-			return
-		}
-		for _, session := range sessions {
-			if !strings.HasPrefix(session.ExternalKey, r.Engine.SourceID+":channel:") {
-				continue
-			}
-			key, err := conversation.ParseKey(r.Engine.SourceID, w.ID, session.ExternalKey)
-			if err != nil {
-				r.Logger.Error("session identity invalid")
-				return
-			}
-			if !r.discoveredJob(ctx, epoch, key, w, true) {
-				return
-			}
-		}
-		r.mu.Lock()
-		if epoch == r.epoch {
-			r.discovered[w.ID] = time.Now()
-		}
-		r.mu.Unlock()
-	}
-	r.mu.Lock()
-	if epoch != r.epoch {
-		r.mu.Unlock()
+	if !r.discover(ctx, cfg, retired, epoch) {
 		return
 	}
-	r.discovering = false
-	r.initialized = true
-	for _, j := range r.jobs {
-		if j.CapacityWait {
-			j.Dirty = true
-		}
-	}
-	r.mu.Unlock()
-	r.notify()
 	for _, ch := range channels {
 		if ch.DeleteAt != 0 {
 			continue
@@ -637,12 +572,12 @@ func (r *Runtime) scan(ctx context.Context, cfg config.Config, retired []config.
 			digest := attachments.ObjectHash(v)
 			r.mu.Lock()
 			changed := r.digests[key] != digest
-			relevant := triggers[root] || r.active[key] > 0 || r.jobs[key] != nil
+			relevant := triggers[root] || r.capacity.count(key) > 0 || r.jobs[key] != nil
 			r.mu.Unlock()
 			if !changed || !relevant {
 				continue
 			}
-			if !r.discoveredJob(ctx, epoch, key, *w, false) {
+			if !r.discoveredJob(ctx, epoch, key, *w) {
 				return
 			}
 			r.mu.Lock()

@@ -19,6 +19,10 @@ type replaySource struct {
 	created int
 }
 
+func (*replayAPI) ActiveRuns(context.Context, string, time.Time, time.Time) ([]conversation.ActiveRun, error) {
+	return nil, nil
+}
+
 func (s *replaySource) Create(_ context.Context, p mattermost.CreatePost) (mattermost.Post, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -93,7 +97,7 @@ func TestReplayRecovery1000Threads(t *testing.T) {
 		var recovered bool
 		for ctx.Err() == nil {
 			runtime.mu.Lock()
-			idle := runtime.initialized && !runtime.scanning && runtime.running == 0 && len(runtime.jobs) == 0
+			idle := runtime.ready.Load() && !runtime.scanning && runtime.running == 0 && len(runtime.jobs) == 0
 			runtime.mu.Unlock()
 			if idle && runtime.ready.Load() {
 				recovered = true

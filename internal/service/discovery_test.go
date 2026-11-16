@@ -18,6 +18,10 @@ type windowDiscoveryAPI struct {
 	discover func(context.Context, string, time.Time, time.Time) ([]conversation.Session, error)
 }
 
+func (windowDiscoveryAPI) ActiveRuns(context.Context, string, time.Time, time.Time) ([]conversation.ActiveRun, error) {
+	return nil, nil
+}
+
 func (a windowDiscoveryAPI) DiscoverSessions(ctx context.Context, namespace string, from, to time.Time) ([]conversation.Session, error) {
 	return a.discover(ctx, namespace, from, to)
 }
@@ -31,8 +35,8 @@ func discoveryRuntime(t *testing.T, api API) *Runtime {
 	return &Runtime{
 		Engine: engine, Logger: slog.New(slog.DiscardHandler), cfg: engine.Config,
 		jobs: map[conversation.Key]*scheduled{}, channels: map[string]mattermost.Channel{},
-		active: map[conversation.Key]int{}, unknown: map[conversation.Key]bool{},
-		scanned: map[string]time.Time{}, discovered: map[string]time.Time{},
+		capacity: newRunCapacity(),
+		scanned:  map[string]time.Time{}, discovered: map[string]time.Time{},
 		digests: map[conversation.Key]string{}, wake: make(chan struct{}, 1),
 	}
 }
@@ -108,11 +112,11 @@ func TestSessionDiscoveryKeepsTrackedWork(t *testing.T) {
 	activeJob := &scheduled{Workflow: w, Next: old}
 	pendingJob := &scheduled{Workflow: w, Next: old, Retry: retry{Failures: 1, At: old}}
 	r.jobs[activeKey], r.jobs[pendingKey] = activeJob, pendingJob
-	r.active[activeKey] = 1
+	r.capacity.observe(activeKey, 1)
 	r.Engine.set(pendingKey, pending{Workflow: w})
 	r.discovered[w.ID] = time.Now().Add(-w.FullReconcileInterval.Value())
 	r.scan(t.Context(), r.cfg, nil, 0)
-	if r.jobs[activeKey] != activeJob || r.jobs[pendingKey] != pendingJob || r.active[activeKey] != 1 {
+	if r.jobs[activeKey] != activeJob || r.jobs[pendingKey] != pendingJob || r.capacity.count(activeKey) != 1 {
 		t.Fatal("bounded discovery discarded tracked active or pending work")
 	}
 	if _, ok := r.Engine.get(pendingKey); !ok {
