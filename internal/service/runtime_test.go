@@ -26,7 +26,7 @@ type runtimeAPI struct {
 	cancel context.CancelFunc
 }
 
-func (*runtimeAPI) Sessions(context.Context, string, string) ([]conversation.Session, error) {
+func (*runtimeAPI) DiscoverSessions(context.Context, string, time.Time, time.Time) ([]conversation.Session, error) {
 	return nil, nil
 }
 func (*runtimeAPI) Snapshot(context.Context, conversation.Key) (conversation.Snapshot, error) {
@@ -347,7 +347,7 @@ type schedulerAPI struct {
 	release   chan struct{}
 }
 
-func (*schedulerAPI) Sessions(context.Context, string, string) ([]conversation.Session, error) {
+func (*schedulerAPI) DiscoverSessions(context.Context, string, time.Time, time.Time) ([]conversation.Session, error) {
 	return nil, nil
 }
 func (a *schedulerAPI) Snapshot(_ context.Context, key conversation.Key) (conversation.Snapshot, error) {

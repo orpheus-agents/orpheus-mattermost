@@ -35,7 +35,11 @@ type scheduled struct {
 	Retry                        retry
 }
 
-const maxQueuedThreads = 4096
+const (
+	maxQueuedThreads          = 4096
+	startupDiscoveryLookback  = 21 * 24 * time.Hour
+	periodicDiscoveryLookback = 7 * 24 * time.Hour
+)
 
 type Runtime struct {
 	Engine                                         *Engine
@@ -543,12 +547,17 @@ func (r *Runtime) scan(ctx context.Context, cfg config.Config, retired []config.
 	workflows := append(slices.Clone(cfg.Workflows), retired...)
 	for _, w := range workflows {
 		r.mu.Lock()
-		due := time.Since(r.discovered[w.ID]) >= w.FullReconcileInterval.Value()
+		lastDiscovery := r.discovered[w.ID]
 		r.mu.Unlock()
-		if !due {
+		if time.Since(lastDiscovery) < w.FullReconcileInterval.Value() {
 			continue
 		}
-		sessions, err := r.Engine.API.Sessions(ctx, "mattermost/"+w.ID, "")
+		lookback := periodicDiscoveryLookback
+		if lastDiscovery.IsZero() {
+			lookback = startupDiscoveryLookback
+		}
+		to := time.Now().UTC()
+		sessions, err := r.Engine.API.DiscoverSessions(ctx, "mattermost/"+w.ID, to.Add(-lookback), to)
 		if err != nil {
 			r.Logger.Error("session discovery failed", "class", errorClass(err))
 			return

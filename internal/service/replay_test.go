@@ -38,7 +38,7 @@ type replayAPI struct {
 	submits   atomic.Int32
 }
 
-func (a *replayAPI) Sessions(context.Context, string, string) ([]conversation.Session, error) {
+func (a *replayAPI) DiscoverSessions(context.Context, string, time.Time, time.Time) ([]conversation.Session, error) {
 	return a.sessions, nil
 }
 func (a *replayAPI) Snapshot(_ context.Context, key conversation.Key) (conversation.Snapshot, error) {

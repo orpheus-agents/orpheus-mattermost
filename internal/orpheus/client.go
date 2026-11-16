@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/attachments"
@@ -95,6 +96,19 @@ func (c *Client) Sessions(ctx context.Context, namespace, external string) ([]co
 	if external != "" {
 		params.ExternalKey = &external
 	}
+	return c.sessions(ctx, params)
+}
+
+// DiscoverSessions bounds namespace discovery by the latest run's creation time.
+// Exact-thread snapshots keep using Sessions without a time window.
+func (c *Client) DiscoverSessions(ctx context.Context, namespace string, from, to time.Time) ([]conversation.Session, error) {
+	return c.sessions(ctx, &api.ListSessionsParams{
+		Namespace: &namespace, Order: new(api.ListSessionsParamsOrderAsc), Limit: new(200),
+		LastRunCreatedFrom: &from, LastRunCreatedTo: &to,
+	})
+}
+
+func (c *Client) sessions(ctx context.Context, params *api.ListSessionsParams) ([]conversation.Session, error) {
 	var result []conversation.Session
 	seen := map[string]bool{}
 	for {
@@ -103,7 +117,7 @@ func (c *Client) Sessions(ctx context.Context, namespace, external string) ([]co
 			return nil, err
 		}
 		for _, s := range p.Items {
-			if ptr(s.Namespace) != namespace {
+			if ptr(s.Namespace) != *params.Namespace {
 				return nil, errors.New("orpheus namespace mismatch")
 			}
 			result = append(result, conversation.Session{ID: s.ID.String(), AllowMultipleRuns: s.AllowMultipleRuns, ExternalKey: ptr(s.ExternalKey), CreatedAt: s.CreatedAt, SandboxID: ptr(s.Sandbox.ID), SandboxState: string(s.Sandbox.State), SandboxLastState: ptr(s.Sandbox.LastKnownState), Workspace: ptr(s.Sandbox.Workspace), TotalTokens: s.Usage.TotalTokens, MaxTokens: s.Configuration.Limits.MaxSessionTokens})

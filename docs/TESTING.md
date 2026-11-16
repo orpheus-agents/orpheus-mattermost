@@ -76,6 +76,7 @@ production SLA. Pagination is tested independently with HTTP fixtures containing
 | Safe staged hook diagnostics, network/HTTP/OS failures, bounded clarification-import stderr and early process exit | `sandbox/test_diagnostics.py`, `sandbox/diagnostics_test.go`, `agentbox/access_test.go`, `agentbox/prepare_diagnostic_test.go` |
 | Same-thread references, far linked target, cross-channel links, bot/Markdown triggers and budgets | `conversation/context_test.go`, `config/config_test.go` |
 | Pagination, SSE cursor recovery, redirects and stream limits | `orpheus/client_test.go`, `mattermost/client_test.go` |
+| Startup/periodic discovery windows, failed-scan retries, retained tracked work, fixed pagination bounds and complete thread snapshots | `service/discovery_test.go`, `orpheus/discovery_test.go`, `orpheus/client_test.go` |
 
 Exactly-once publication across two independent APIs is not guaranteed. If a POST
 commits but its response and receipt remain unavailable after Mattermost's
