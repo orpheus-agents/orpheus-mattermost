@@ -1,7 +1,11 @@
 package delivery
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
 
 	"github.com/orpheus-agents/orpheus-mattermost/internal/conversation"
 )
@@ -31,5 +35,34 @@ func TestFailureQuotesErrorMessage(t *testing.T) {
 		if got := Failure(run, conversation.Render{Version: version}); got != "Run failed (harness_failed)." {
 			t.Fatalf("renderer %d changed persisted notice: %q", version, got)
 		}
+	}
+}
+
+func TestDiagnosticIDIsWholeAndOnlyInNewNotices(t *testing.T) {
+	id := uuid.NewString()
+	run := conversation.Run{Status: "failed", Error: "harness_failed", ErrorMessage: strings.Repeat("Long error. ", 200), DiagnosticID: id}
+	for version := 1; version <= 5; version++ {
+		render := conversation.Render{Version: version, MaxChars: 64}
+		text := Failure(run, render)
+		if strings.Contains(text, id) != (version == 5) {
+			t.Fatalf("wrong renderer %d", version)
+		}
+		parts := Parts(conversation.Key{}, "s", "r", "run_status", text, render, nil)
+		found := 0
+		for _, part := range parts {
+			if utf8.RuneCountInString(part.Text) > render.MaxChars {
+				t.Fatal("post exceeds limit")
+			}
+			if strings.Contains(part.Text, id) {
+				found++
+			}
+		}
+		if version == 5 && found != 1 {
+			t.Fatal("ID split or duplicated")
+		}
+	}
+	run.DiagnosticID = ""
+	if strings.Contains(Failure(run, conversation.Render{Version: 5}), "Код диагностики") {
+		t.Fatal("empty diagnostic label")
 	}
 }

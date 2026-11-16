@@ -12,10 +12,11 @@ import (
 )
 
 func TestRunEndpointsPreserveErrorMessage(t *testing.T) {
-	for _, tc := range []struct{ name, code, message string }{
-		{"capacity", "harness_failed", "Selected model is at capacity.\nPlease try a different model."},
-		{"without message", "harness_failed", ""},
-		{"without error", "", ""},
+	for _, tc := range []struct{ name, code, message, diagnosticID string }{
+		{"capacity", "harness_failed", "Selected model is at capacity.\nPlease try a different model.", uuid.NewString()},
+		{"without message", "harness_failed", "", uuid.NewString()},
+		{"without diagnostic", "harness_failed", "Rejected", ""},
+		{"without error", "", "", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sid, rid := uuid.NewString(), uuid.NewString()
@@ -23,6 +24,9 @@ func TestRunEndpointsPreserveErrorMessage(t *testing.T) {
 				var problem any
 				if tc.code != "" {
 					problem = map[string]any{"code": tc.code, "message": tc.message, "phase": "execution", "details": []any{}}
+					if tc.diagnosticID != "" {
+						problem.(map[string]any)["diagnostic_id"] = tc.diagnosticID
+					}
 				}
 				run := map[string]any{"id": rid, "session_id": sid, "number": 1, "status": "failed", "error": problem}
 				var body any = run
@@ -39,7 +43,7 @@ func TestRunEndpointsPreserveErrorMessage(t *testing.T) {
 			}
 			check := func(run conversation.Run) {
 				t.Helper()
-				if run.ID != rid || run.Error != tc.code || run.ErrorMessage != tc.message {
+				if run.ID != rid || run.Error != tc.code || run.ErrorMessage != tc.message || run.DiagnosticID != tc.diagnosticID {
 					t.Fatalf("lost run error: %+v", run)
 				}
 			}

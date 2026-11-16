@@ -15,7 +15,7 @@ import (
 
 var operationNamespace = uuid.MustParse("1cd37086-3385-5b91-8925-e9f1fd9fe83d")
 
-const renderVersion = 4
+const renderVersion = 5
 
 type Key struct {
 	Source   string
@@ -119,6 +119,7 @@ type Run struct {
 	Observation    string
 	Error          string
 	ErrorMessage   string
+	DiagnosticID   string
 	StopReason     string
 	AgentStatus    string
 	Hooks          []Hook

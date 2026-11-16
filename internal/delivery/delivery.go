@@ -347,6 +347,11 @@ func Failure(r conversation.Run, render conversation.Render) string {
 			message = strings.ReplaceAll(message, "\r", "\n")
 			text += "\n\n> " + strings.ReplaceAll(message, "\n", "\n> ")
 		}
+		if render.Version >= 5 && r.DiagnosticID != "" {
+			// Put the complete ID first: the line fits even the minimum 64-char
+			// post limit and cannot be split by a long error message.
+			text = "Код диагностики: `" + r.DiagnosticID + "`\n\n" + text
+		}
 		return text
 	}
 	return ""

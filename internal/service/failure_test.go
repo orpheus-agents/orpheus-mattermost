@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/orpheus-agents/orpheus-mattermost/internal/conversation"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/mattermost"
 )
 
 func TestFailureNoticeSurvivesReplay(t *testing.T) {
-	for version := 1; version <= 4; version++ {
+	for version := 1; version <= 5; version++ {
 		t.Run(fmt.Sprint(version), func(t *testing.T) {
 			e, api, mm, _, key := fixture(t)
 			w := e.Config.Workflows[0]
@@ -23,17 +25,21 @@ func TestFailureNoticeSurvivesReplay(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if env.Render.Version != 4 {
+			if env.Render.Version != 5 {
 				t.Fatalf("new run uses renderer %d", env.Render.Version)
 			}
 			env.Render.Version = version
 			message.Metadata = testMetadata(env)
 			run := &s.Runs[0]
 			run.Status, run.Error = "failed", "harness_failed"
+			run.DiagnosticID = uuid.NewString()
 			want := "Run failed (harness_failed)."
-			if version == 4 {
+			if version >= 4 {
 				run.ErrorMessage = "Selected model is at capacity. Please try a different model."
 				want += "\n\n> " + run.ErrorMessage
+			}
+			if version >= 5 {
+				want = "Код диагностики: `" + run.DiagnosticID + "`\n\n" + want
 			}
 			if err := e.Thread(t.Context(), w, key, channel, true); err != nil {
 				t.Fatal(err)

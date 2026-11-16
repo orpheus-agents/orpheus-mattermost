@@ -151,6 +151,9 @@ func run(r api.Run) conversation.Run {
 	if r.Error != nil {
 		v.Error = r.Error.Code
 		v.ErrorMessage = r.Error.Message
+		if r.Error.DiagnosticID != nil {
+			v.DiagnosticID = r.Error.DiagnosticID.String()
+		}
 	}
 	if r.FinalMessage != nil {
 		v.FinalMessageID = r.FinalMessage.ID.String()
