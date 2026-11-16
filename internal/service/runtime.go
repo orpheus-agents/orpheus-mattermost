@@ -39,6 +39,7 @@ const (
 	maxQueuedThreads          = 4096
 	startupDiscoveryLookback  = 21 * 24 * time.Hour
 	periodicDiscoveryLookback = 7 * 24 * time.Hour
+	periodicChannelLookback   = 7 * 24 * time.Hour
 )
 
 type Runtime struct {
@@ -607,12 +608,18 @@ func (r *Runtime) scan(ctx context.Context, cfg config.Config, retired []config.
 			continue
 		}
 		r.mu.Lock()
-		due := time.Since(r.scanned[ch.ID]) >= w.PollInterval.Value()
+		lastScan := r.scanned[ch.ID]
 		r.mu.Unlock()
-		if !due {
+		if time.Since(lastScan) < w.PollInterval.Value() {
 			continue
 		}
-		posts, err := r.Engine.MM.Posts(ctx, ch.ID, w.Since)
+		from := w.Since
+		if !lastScan.IsZero() {
+			if recent := time.Now().UTC().Add(-periodicChannelLookback); recent.After(from) {
+				from = recent
+			}
+		}
+		posts, err := r.Engine.MM.Posts(ctx, ch.ID, from)
 		if err != nil {
 			r.Logger.Error("channel replay failed", "channel", ch.ID, "class", errorClass(err))
 			return

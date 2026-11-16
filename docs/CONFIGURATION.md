@@ -130,6 +130,10 @@ time in RFC3339, not a moving lookback window. When transferring channel ownersh
 set an explicit cutover for the new workflow to avoid replaying another owner's
 old requests.
 
+The first channel replay starts at `reconcile_from`; subsequent polls use a
+seven-day window bounded by that date. This does not move the workflow's input
+cutoff or truncate the context loaded for a selected thread.
+
 The Markdown body is the complete set of connector-provided agent instructions;
 the connector does not append hidden instructions. See the suggested Mattermost
 file-handling paragraph in the [README](../README.md). Changes to instructions, profile,
@@ -278,7 +282,19 @@ Unchanged thread fingerprints suppress redundant processing during channel polls
 threads without possible triggers are skipped. Active and pending work retains
 periodic reconciliation. SSE starts at the watermark of the fetched history.
 
-Full REST replay costs grow with history since `reconcile_from`. Concurrent writes
-can shift pages; the next full scan catches omissions, while admission keys
-suppress duplicates. Channel replay uses page/per-page, not `since` or `before`,
-which can truncate results or lose posts sharing a timestamp at a page boundary.
+The first successful replay of each channel after startup or configuration reload
+reads from `reconcile_from`. Later polls read from the later of `reconcile_from`
+and seven days before that channel's poll starts. Newly discovered channels also
+start at `reconcile_from`. A failed replay does not record a successful scan:
+initial failures retain the full startup range for retry. The boundary applies
+to each post's creation time, including replies, rather than its edit time or the
+thread root's age. Each selected thread is still fetched in full for context.
+
+Periodic channel replay intentionally stops searching older posts. If channel
+access is lost for longer than seven days, or an older post is edited while its
+WebSocket event is missed, that work can remain undiscovered until another event
+or a full startup/reload replay finds it. Known active and pending work continues
+its normal reconciliation. Concurrent writes can shift offset pages; later polls
+revisit posts still inside their window, while admission keys suppress duplicates.
+Channel replay uses page/per-page, not `since` or `before`, which can truncate
+results or lose posts sharing a timestamp at a page boundary.
