@@ -40,6 +40,46 @@ func TestDiscoveryPageFailureDiscardsPartialResult(t *testing.T) {
 	}
 }
 
+func TestActiveDiscoveryRejectsIncompleteAccounting(t *testing.T) {
+	for _, failure := range []string{"later page", "missing run", "wrong namespace", "repeated cursor"} {
+		t.Run(failure, func(t *testing.T) {
+			pages := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				pages++
+				if r.URL.Path != "/api/v1/sessions" || r.URL.Query().Get("activity") != "active" {
+					t.Error("active discovery loaded history or omitted its filter", r.URL)
+				}
+				if pages == 2 && failure == "later page" {
+					w.WriteHeader(http.StatusInternalServerError)
+					return
+				}
+				item := map[string]any{"id": uuid.NewString(), "namespace": "mattermost/assistant", "active_run_id": uuid.NewString()}
+				if failure == "missing run" {
+					delete(item, "active_run_id")
+				}
+				if failure == "wrong namespace" {
+					item["namespace"] = "mattermost/other"
+				}
+				page := map[string]any{"items": []any{item}}
+				if failure == "later page" || failure == "repeated cursor" {
+					page["next_cursor"] = "next"
+				}
+				_ = json.NewEncoder(w).Encode(page)
+			}))
+			defer server.Close()
+			client, err := New(config.Config{Orpheus: config.Endpoint{BaseURL: server.URL}}, "token")
+			if err != nil {
+				t.Fatal(err)
+			}
+			to := time.Now().UTC()
+			runs, err := client.ActiveRuns(t.Context(), "mattermost/assistant", to.Add(-7*24*time.Hour), to)
+			if err == nil || len(runs) != 0 {
+				t.Fatal("incomplete accounting accepted", runs, err)
+			}
+		})
+	}
+}
+
 func TestSnapshotKeepsOldGenerationsAfterDiscovery(t *testing.T) {
 	key := conversation.Key{Source: "chat", Workflow: "assistant", Channel: strings.Repeat("a", 26), Root: strings.Repeat("b", 26)}
 	oldID, recentID := uuid.NewString(), uuid.NewString()

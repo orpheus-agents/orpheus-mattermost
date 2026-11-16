@@ -251,6 +251,20 @@ The lower bound is inclusive and the upper bound is the start of discovery,
 exclusive; every page uses the same bounds. Failed discoveries do not advance
 the workflow's last successful discovery time.
 
+Each due discovery first lists unfinished runs through session summaries
+(`activity=active`) in the same window. The connector restores occupied run slots
+before queueing thread histories for delivery recovery. Each due workflow blocks
+new runs only while its active-work accounting is incomplete; failures in another
+workflow do not block it. Channel polls and delivery recovery do not gate
+admission. Reload cancels the obsolete scan and starts fresh accounting.
+`max_concurrent_runs` still applies.
+
+Periodic discovery adds found work without clearing local reservations or tracked
+runs outside the window. Subsequent thread observations release completed work
+and resolve uncertain admissions. A slow or failed archive read cannot invalidate
+already restored capacity. Recovery still shares the `MAX_PARALLEL_THREADS`
+worker pool, so a delivery backlog can delay thread processing.
+
 The window applies only to finding threads. Each selected thread still loads all
 session generations, runs and messages. An old session with a recent run is
 included. Known active work and pending delivery or admission continue to be

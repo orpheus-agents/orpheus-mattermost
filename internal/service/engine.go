@@ -23,6 +23,7 @@ import (
 type API interface {
 	Snapshot(context.Context, conversation.Key) (conversation.Snapshot, error)
 	DiscoverSessions(context.Context, string, time.Time, time.Time) ([]conversation.Session, error)
+	ActiveRuns(context.Context, string, time.Time, time.Time) ([]conversation.ActiveRun, error)
 	Submit(context.Context, config.Workflow, conversation.Envelope, []conversation.InputMessage, string, string, string) (conversation.Accepted, error)
 	Cancel(context.Context, string, string) error
 	Run(context.Context, string, string) (conversation.Run, error)

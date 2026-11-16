@@ -81,10 +81,10 @@ func TestPermanentThreadFailureKeepsWorkflowSchedulable(t *testing.T) {
 				time.Sleep(5 * time.Second)
 				synctest.Wait()
 				r.mu.Lock()
-				blocked, unknown := r.jobs[key].Retry.Permanent, r.unknown[key]
+				blocked := r.jobs[key].Retry.Permanent
 				r.mu.Unlock()
-				if !blocked || unknown || source.attempts.Load() != 1 {
-					t.Fatalf("failed thread was retried or left unknown: permanent=%v unknown=%v attempts=%d", blocked, unknown, source.attempts.Load())
+				if !blocked || source.attempts.Load() != 1 {
+					t.Fatalf("failed thread was retried: permanent=%v attempts=%d", blocked, source.attempts.Load())
 				}
 				// Without a full discovery, a terminal blocked thread stays idle.
 				r.mu.Lock()
@@ -148,11 +148,12 @@ func TestPermanentThreadFailureKeepsWorkflowSchedulable(t *testing.T) {
 }
 
 func observationRuntime(e *Engine, key conversation.Key) *Runtime {
+	capacity := newRunCapacity()
+	capacity.restore(key.Workflow, map[conversation.Key]int{key: 1})
 	return &Runtime{
-		Engine: e, Logger: slog.New(slog.DiscardHandler), initialized: true,
+		Engine: e, Logger: slog.New(slog.DiscardHandler),
 		jobs:      map[conversation.Key]*scheduled{key: {Retry: retry{Permanent: true}}},
-		active:    map[conversation.Key]int{},
-		unknown:   map[conversation.Key]bool{key: true},
+		capacity:  capacity,
 		watchers:  map[string]context.CancelFunc{},
 		watchKeys: map[string]conversation.Key{},
 		wake:      make(chan struct{}, 1),
@@ -185,17 +186,17 @@ func TestPermanentThreadObservationRetainsRunCapacity(t *testing.T) {
 		wg.Wait()
 	}()
 	runThreadWork(t, r, &wg, key)
-	if r.unknown[key] || r.active[key] != 1 || len(r.watchers) != 1 || r.reserve(fresh, w) {
+	if r.capacity.count(key) != 1 || len(r.watchers) != 1 || r.reserve(fresh, w) {
 		t.Fatal("active run in a blocked thread lost its reserved capacity")
 	}
 	api.mu.Lock()
 	api.snapshots[key].Sessions[0].Runs[0].Status = "completed"
 	api.mu.Unlock()
-	if !r.discoveredJob(t.Context(), r.epoch, key, w, true) || r.reserve(fresh, w) {
+	if !r.discoveredJob(t.Context(), r.epoch, key, w) || r.reserve(fresh, w) {
 		t.Fatal("rediscovery admitted work before observing the session")
 	}
 	runThreadWork(t, r, &wg, key)
-	if r.unknown[key] || r.active[key] != 0 || len(r.watchers) != 0 || !r.jobs[fresh].Dirty || !r.reserve(fresh, w) {
+	if r.capacity.count(key) != 0 || len(r.watchers) != 0 || !r.jobs[fresh].Dirty || !r.reserve(fresh, w) {
 		t.Fatal("completed run did not release capacity and wake waiting work")
 	}
 	if !r.jobs[key].Retry.Permanent {
@@ -210,6 +211,7 @@ func TestPermanentThreadObservationFailuresBackOff(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e, api, _, _, key := fixture(t)
+			e.Config.Workflows[0].MaxConcurrentRuns = 1
 			e.API = failedSnapshot{err: err}
 			r := observationRuntime(e, key)
 			var wg sync.WaitGroup
@@ -219,7 +221,7 @@ func TestPermanentThreadObservationFailuresBackOff(t *testing.T) {
 				started := time.Now()
 				runThreadWork(t, r, &wg, key)
 				job := r.jobs[key]
-				if !job.Retry.Permanent || !r.unknown[key] || job.Retry.Failures != attempt || !job.Dirty || r.reserve(fresh, e.Config.Workflows[0]) {
+				if !job.Retry.Permanent || r.capacity.count(key) != 1 || job.Retry.Failures != attempt || !job.Dirty || r.reserve(fresh, e.Config.Workflows[0]) {
 					t.Fatal("observation failure resumed reconciliation or admitted unknown capacity")
 				}
 				delay := time.Second * time.Duration(1<<attempt)
@@ -233,7 +235,7 @@ func TestPermanentThreadObservationFailuresBackOff(t *testing.T) {
 			e.API = api
 			runThreadWork(t, r, &wg, key)
 			job := r.jobs[key]
-			if !job.Retry.Permanent || job.Retry.Failures != 0 || !job.Retry.At.IsZero() || r.unknown[key] || !r.reserve(fresh, e.Config.Workflows[0]) {
+			if !job.Retry.Permanent || job.Retry.Failures != 0 || !job.Retry.At.IsZero() || !r.reserve(fresh, e.Config.Workflows[0]) {
 				t.Fatal("successful observation did not clear the transient failure while preserving the permanent failure")
 			}
 		})
@@ -250,11 +252,11 @@ func TestPermanentAdmissionFailureReleasesReservation(t *testing.T) {
 			e.API, e.MM = bad, source
 			r := observationRuntime(e, key)
 			r.jobs[key].Retry = retry{}
-			delete(r.unknown, key)
+			r.capacity.observe(key, 0)
 			e.Reserve = r.reserve
 			var wg sync.WaitGroup
 			runThreadWork(t, r, &wg, key)
-			if bad.calls != 1 || len(api.snapshot.Sessions) != 0 || r.active[key] != 1 || !r.jobs[key].Retry.Permanent || !r.jobs[key].Dirty || len(r.unknown) != 0 {
+			if bad.calls != 1 || len(api.snapshot.Sessions) != 0 || r.capacity.count(key) != 1 || !r.jobs[key].Retry.Permanent || !r.jobs[key].Dirty {
 				t.Fatal("permanent admission failure did not leave a reservation without a run")
 			}
 			wantPosts := int32(0)
@@ -271,7 +273,7 @@ func TestPermanentAdmissionFailureReleasesReservation(t *testing.T) {
 				t.Fatal("unobserved reservation was ignored")
 			}
 			runThreadWork(t, r, &wg, key)
-			if r.active[key] != 0 || !r.jobs[key].Retry.Permanent || bad.calls != 1 || source.attempts.Load() != wantPosts || !r.jobs[fresh].Dirty || !r.reserve(fresh, e.Config.Workflows[0]) {
+			if r.capacity.count(key) != 0 || !r.jobs[key].Retry.Permanent || bad.calls != 1 || source.attempts.Load() != wantPosts || !r.jobs[fresh].Dirty || !r.reserve(fresh, e.Config.Workflows[0]) {
 				t.Fatal("observation did not release the reservation without retrying admission or rejection")
 			}
 		})

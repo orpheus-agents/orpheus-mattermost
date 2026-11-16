@@ -108,8 +108,39 @@ func (c *Client) DiscoverSessions(ctx context.Context, namespace string, from, t
 	})
 }
 
+// ActiveRuns uses session summaries; it never loads runs or message history.
+func (c *Client) ActiveRuns(ctx context.Context, namespace string, from, to time.Time) ([]conversation.ActiveRun, error) {
+	sessions, err := c.listSessions(ctx, &api.ListSessionsParams{
+		Namespace: &namespace, Activity: new(api.Active), Order: new(api.ListSessionsParamsOrderAsc), Limit: new(200),
+		LastRunCreatedFrom: &from, LastRunCreatedTo: &to,
+	})
+	if err != nil {
+		return nil, err
+	}
+	var result []conversation.ActiveRun
+	for _, s := range sessions {
+		if s.ActiveRunID == nil {
+			return nil, errors.New("active session has no active run")
+		}
+		result = append(result, conversation.ActiveRun{SessionID: s.ID.String(), RunID: s.ActiveRunID.String(), ExternalKey: ptr(s.ExternalKey)})
+	}
+	return result, nil
+}
+
 func (c *Client) sessions(ctx context.Context, params *api.ListSessionsParams) ([]conversation.Session, error) {
+	sessions, err := c.listSessions(ctx, params)
+	if err != nil {
+		return nil, err
+	}
 	var result []conversation.Session
+	for _, s := range sessions {
+		result = append(result, conversation.Session{ID: s.ID.String(), AllowMultipleRuns: s.AllowMultipleRuns, ExternalKey: ptr(s.ExternalKey), CreatedAt: s.CreatedAt, SandboxID: ptr(s.Sandbox.ID), SandboxState: string(s.Sandbox.State), SandboxLastState: ptr(s.Sandbox.LastKnownState), Workspace: ptr(s.Sandbox.Workspace), TotalTokens: s.Usage.TotalTokens, MaxTokens: s.Configuration.Limits.MaxSessionTokens})
+	}
+	return result, nil
+}
+
+func (c *Client) listSessions(ctx context.Context, params *api.ListSessionsParams) ([]api.Session, error) {
+	var result []api.Session
 	seen := map[string]bool{}
 	for {
 		p, err := decode[api.SessionPage](c.api.ListSessions(ctx, params)) //nolint:bodyclose // decode owns and closes the response body.
@@ -120,7 +151,7 @@ func (c *Client) sessions(ctx context.Context, params *api.ListSessionsParams) (
 			if ptr(s.Namespace) != *params.Namespace {
 				return nil, errors.New("orpheus namespace mismatch")
 			}
-			result = append(result, conversation.Session{ID: s.ID.String(), AllowMultipleRuns: s.AllowMultipleRuns, ExternalKey: ptr(s.ExternalKey), CreatedAt: s.CreatedAt, SandboxID: ptr(s.Sandbox.ID), SandboxState: string(s.Sandbox.State), SandboxLastState: ptr(s.Sandbox.LastKnownState), Workspace: ptr(s.Sandbox.Workspace), TotalTokens: s.Usage.TotalTokens, MaxTokens: s.Configuration.Limits.MaxSessionTokens})
+			result = append(result, s)
 		}
 		if p.NextCursor == nil {
 			break

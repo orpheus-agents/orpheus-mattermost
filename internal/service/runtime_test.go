@@ -26,6 +26,10 @@ type runtimeAPI struct {
 	cancel context.CancelFunc
 }
 
+func (*runtimeAPI) ActiveRuns(context.Context, string, time.Time, time.Time) ([]conversation.ActiveRun, error) {
+	return nil, nil
+}
+
 func (*runtimeAPI) DiscoverSessions(context.Context, string, time.Time, time.Time) ([]conversation.Session, error) {
 	return nil, nil
 }
@@ -156,21 +160,19 @@ func TestPrivateChannelScanFailsClosed(t *testing.T) {
 		errors:   map[string]error{channel: &mattermost.HTTPError{Status: 403}},
 	}
 	runtime := &Runtime{
-		Engine:      &Engine{Config: engine.Config, MM: source, API: &runtimeAPI{}, Bot: mattermost.User{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbb"}},
-		Logger:      slog.New(slog.DiscardHandler),
-		jobs:        map[conversation.Key]*scheduled{},
-		channels:    map[string]mattermost.Channel{},
-		active:      map[conversation.Key]int{},
-		unknown:     map[conversation.Key]bool{},
-		scanned:     map[string]time.Time{},
-		discovered:  map[string]time.Time{},
-		digests:     map[conversation.Key]string{},
-		wake:        make(chan struct{}, 1),
-		scanning:    true,
-		discovering: true,
+		Engine:     &Engine{Config: engine.Config, MM: source, API: &runtimeAPI{}, Bot: mattermost.User{ID: "bbbbbbbbbbbbbbbbbbbbbbbbbb"}},
+		Logger:     slog.New(slog.DiscardHandler),
+		jobs:       map[conversation.Key]*scheduled{},
+		channels:   map[string]mattermost.Channel{},
+		capacity:   newRunCapacity(),
+		scanned:    map[string]time.Time{},
+		discovered: map[string]time.Time{},
+		digests:    map[conversation.Key]string{},
+		wake:       make(chan struct{}, 1),
+		scanning:   true,
 	}
 	runtime.scan(t.Context(), engine.Config, nil, 0)
-	if runtime.initialized || runtime.ready.Load() || runtime.scanning || runtime.discovering {
+	if runtime.capacity.ready[engine.Config.Workflows[0].ID] || runtime.ready.Load() || runtime.scanning {
 		t.Fatal("failed membership revocation did not block readiness and admission")
 	}
 	if len(source.removed) != 1 || len(source.postCalls) != 0 || len(runtime.channels) != 0 {
@@ -345,6 +347,25 @@ type schedulerAPI struct {
 	started   chan string
 	slow      string
 	release   chan struct{}
+}
+
+func (a *schedulerAPI) ActiveRuns(_ context.Context, namespace string, _, _ time.Time) ([]conversation.ActiveRun, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var runs []conversation.ActiveRun
+	for key, snapshot := range a.snapshots {
+		if key.Namespace() != namespace {
+			continue
+		}
+		for _, session := range snapshot.Sessions {
+			for _, run := range session.Runs {
+				if !run.Terminal() {
+					runs = append(runs, conversation.ActiveRun{SessionID: session.ID, RunID: run.ID, ExternalKey: key.External()})
+				}
+			}
+		}
+	}
+	return runs, nil
 }
 
 func (*schedulerAPI) DiscoverSessions(context.Context, string, time.Time, time.Time) ([]conversation.Session, error) {
