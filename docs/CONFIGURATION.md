@@ -154,7 +154,7 @@ semantic setting.
 | `draining` | `false` | Deliver accepted results without admitting new requests |
 | `message_batch_window` | `0` | Window from the first unaccepted trigger; `0` starts it immediately, so later posts are outside that batch |
 | `poll_interval` | `30s` | Channel REST replay and known-thread reconciliation |
-| `full_reconcile_interval` | `5m` | Rediscover all sessions in each workflow namespace |
+| `full_reconcile_interval` | `5m` | Rediscover sessions in each workflow namespace within the applicable latest-run creation window |
 | `max_concurrent_runs` | `10` | Active-run limit per workflow |
 | `run_timeout_seconds` | `3600` | Orpheus run timeout |
 | `hook_timeout_seconds` | `120` | File preparation deadline |
@@ -237,8 +237,23 @@ workflow's namespace will no longer be enumerated.
 Run one connector replica per source with sequential replacement. One process can
 serve several sources from workflow definitions. Its
 `mattermost/<workflow>` namespaces must have no other run initiators or sandbox
-controllers. On restart, the connector reconciles all session generations and
-all accepted runs; there is no local database or persistent volume.
+controllers. There is no local database or persistent volume.
+
+Orpheus namespace discovery selects sessions whose latest run was created in the
+last 21 days on the first successful discovery of each workflow after startup or
+configuration reload. Later discoveries use the last seven days. Both windows
+are fixed connector policy, independent of sandbox retention and `reconcile_from`.
+The lower bound is inclusive and the upper bound is the start of discovery,
+exclusive; every page uses the same bounds. Failed discoveries do not advance
+the workflow's last successful discovery time.
+
+The window applies only to finding threads. Each selected thread still loads all
+session generations, runs and messages. An old session with a recent run is
+included. Known active work and pending delivery or admission continue to be
+reconciled even when absent from a later discovery. Older unknown work can remain
+undiscovered regardless of run status; namespace discovery does not guarantee
+recovery beyond these windows. Mattermost channel replay and thread events can
+still discover such threads independently.
 
 `/health` (`/healthz`) checks the process; `/ready` (`/readyz`) reports the latest
 reconciliation. `/metrics` exposes Go runtime and process metrics alongside reconciliation/error/reconnect/retry counters,

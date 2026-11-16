@@ -30,7 +30,7 @@ func (s *permanentSource) Create(context.Context, mattermost.CreatePost) (matter
 
 type discoveredAPI struct{ *schedulerAPI }
 
-func (a discoveredAPI) Sessions(context.Context, string, string) ([]conversation.Session, error) {
+func (a discoveredAPI) DiscoverSessions(context.Context, string, time.Time, time.Time) ([]conversation.Session, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var sessions []conversation.Session

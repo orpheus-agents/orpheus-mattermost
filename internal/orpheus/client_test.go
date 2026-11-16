@@ -18,9 +18,11 @@ import (
 )
 
 func TestPaginationBeyond200Items(t *testing.T) {
-	for _, kind := range []string{"sessions", "runs", "history"} {
+	for _, kind := range []string{"sessions", "discovery", "runs", "history"} {
 		t.Run(kind, func(t *testing.T) {
 			sid, rid := uuid.NewString(), uuid.NewString()
+			to := time.Date(2026, time.November, 16, 12, 0, 0, 0, time.UTC)
+			from := to.Add(-7 * 24 * time.Hour)
 			pages := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				pages++
@@ -35,13 +37,20 @@ func TestPaginationBeyond200Items(t *testing.T) {
 				if r.URL.Query().Get("limit") != "200" || offset != (pages-1)*200 {
 					t.Error("unexpected pagination", r.URL.RawQuery)
 				}
+				if kind == "discovery" {
+					q := r.URL.Query()
+					if q.Get("namespace") != "mattermost/assistant" || q.Get("last_run_created_from") != from.Format(time.RFC3339Nano) || q.Get("last_run_created_to") != to.Format(time.RFC3339Nano) || q.Has("external_key") || q.Has("activity") {
+						t.Error("discovery window or namespace changed between pages", r.URL.RawQuery)
+					}
+				}
 				items := []any{}
 				for i := offset; i < min(offset+200, 405); i++ {
 					id := uuid.NewSHA1(uuid.Nil, []byte(strconv.Itoa(i))).String()
 					var item any
 					switch kind {
-					case "sessions":
-						item = map[string]any{"id": id, "allow_multiple_runs": i%2 == 0, "namespace": "mattermost/assistant", "created_at": time.Unix(1, 0), "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 100}}}
+					case "sessions", "discovery":
+						// Even sessions created years ago can have a run at the inclusive lower bound.
+						item = map[string]any{"id": id, "allow_multiple_runs": i%2 == 0, "namespace": "mattermost/assistant", "created_at": time.Unix(1, 0), "last_run_created_at": from, "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 100}}}
 					case "runs":
 						item = map[string]any{"id": id, "session_id": sid, "number": i + 1, "status": "completed"}
 					case "history":
@@ -68,6 +77,15 @@ func TestPaginationBeyond200Items(t *testing.T) {
 				for i, item := range items {
 					if item.AllowMultipleRuns != (i%2 == 0) {
 						t.Fatal("session run policy was not preserved", i, item.AllowMultipleRuns)
+					}
+					ids = append(ids, item.ID)
+				}
+			case "discovery":
+				items, e := client.DiscoverSessions(t.Context(), "mattermost/assistant", from, to)
+				err = e
+				for _, item := range items {
+					if !item.CreatedAt.Equal(time.Unix(1, 0)) {
+						t.Fatal("session creation time changed", item.CreatedAt)
 					}
 					ids = append(ids, item.ID)
 				}
