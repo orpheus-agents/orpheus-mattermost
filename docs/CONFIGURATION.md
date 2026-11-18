@@ -328,6 +328,20 @@ Scheduler metrics supplement these existing observations:
 
 The manager adds the same `source` label as on existing connector metrics.
 
+Published agent answers and progress messages may be edited in Mattermost.
+The connector preserves the edited text, including across restarts, and continues
+processing new requests in the thread. It uses the delivery receipt to recognize
+the original publication instead of comparing the current text with the original
+answer. Editing a bot reply does not trigger an agent run or update the agent's
+existing conversation history. Explicit links or context rebuilt for a replacement
+session can include the current Mattermost text.
+
+This rule applies only to agent answers and progress messages published by the
+connector. User and external-bot input handling, connector-generated notices,
+attachment verification, and receipt integrity checks remain unchanged. Conflicting
+receipt hashes, chunk metadata, or duplicate delivery identities still suspend
+the thread.
+
 Permanent POST failures and receipt conflicts suspend retries for that thread;
 run state remains observed, releasing capacity when no active run remains.
 Inspect the thread and settings before reloading to reset retries. Deleted bot

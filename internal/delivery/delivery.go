@@ -1,4 +1,4 @@
-// Package delivery publishes immutable chunks and verifies Mattermost receipts.
+// Package delivery publishes chunks using persisted Mattermost receipts.
 package delivery
 
 import (
@@ -40,6 +40,9 @@ type Receipt struct {
 type Part struct {
 	Receipt Receipt
 	Text    string
+	// AllowTextEdits preserves later Mattermost edits to agent answers and progress.
+	// Receipt identity, original content hash, render contract and files still match.
+	AllowTextEdits bool
 }
 type Source interface {
 	Post(context.Context, string) (mattermost.Post, error)
@@ -96,7 +99,7 @@ func (p *Publisher) find(part Part) (mattermost.Post, Receipt, bool, error) {
 		if !valid || !sameKey(r, part.Receipt) {
 			continue
 		}
-		if r.Hash != part.Receipt.Hash || attachments.Hash([]byte(post.Message)) != r.Hash || r.Parts != part.Receipt.Parts || r.RenderVersion != part.Receipt.RenderVersion || (!p.SkipAttachments && !sameArtifacts(r.Attachments, part.Receipt.Attachments)) {
+		if r.Hash != part.Receipt.Hash || !part.AllowTextEdits && attachments.Hash([]byte(post.Message)) != r.Hash || r.Parts != part.Receipt.Parts || r.RenderVersion != part.Receipt.RenderVersion || (!p.SkipAttachments && !sameArtifacts(r.Attachments, part.Receipt.Attachments)) {
 			return post, r, true, ErrConflict
 		}
 		if ok {
@@ -170,6 +173,7 @@ func (p *Publisher) Publish(ctx context.Context, part Part) error {
 			}
 			repair := part
 			repair.Text = "Attachment for the answer."
+			repair.AllowTextEdits = false
 			repair.Receipt.MessageID = "attachment_repair:" + part.Receipt.MessageID + ":" + a.ArtifactID
 			repair.Receipt.Part = 0
 			repair.Receipt.Parts = 1
@@ -328,7 +332,7 @@ func Parts(key conversation.Key, sid, rid, mid, text string, render conversation
 		if i == 0 {
 			r.Attachments = files
 		}
-		result[i] = Part{r, t}
+		result[i] = Part{Receipt: r, Text: t}
 	}
 	return result
 }

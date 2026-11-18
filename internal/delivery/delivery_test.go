@@ -162,8 +162,9 @@ func TestUnavailableReceiptLeavesDocumentedDuplicateWindow(t *testing.T) {
 		t.Fatal("fixture did not exercise the residual duplicate window")
 	}
 }
-func TestEditedReceiptStopsDelivery(t *testing.T) {
+func TestEditedNoticeStopsDelivery(t *testing.T) {
 	p, mm, part := setup()
+	part.Receipt.MessageID = "run_status"
 	if e := p.Publish(t.Context(), part); e != nil {
 		t.Fatal(e)
 	}
@@ -175,6 +176,144 @@ func TestEditedReceiptStopsDelivery(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestEditedAgentTextSurvivesReplay(t *testing.T) {
+	for _, lostResponse := range []bool{false, true} {
+		t.Run(fmt.Sprint(lostResponse), func(t *testing.T) {
+			p, mm, part := setup()
+			part.AllowTextEdits = true
+			mm.lose = lostResponse
+			if err := p.Publish(t.Context(), part); (err != nil) != lostResponse {
+				t.Fatal("unexpected initial publication result", err)
+			}
+			mm.posts[0].Message = "edited answer with a corrected link"
+			mm.posts[0].EditAt = 1
+			for range 2 {
+				p = &Publisher{MM: mm, Key: p.Key, BotID: p.BotID}
+				if err := p.Refresh(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				if err := p.Publish(t.Context(), part); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mm.calls != 1 || mm.posts[0].Message != "edited answer with a corrected link" || mm.posts[0].Props[Property] == nil {
+				t.Fatal("edited answer was overwritten, duplicated or lost its receipt")
+			}
+		})
+	}
+}
+
+func TestEditedAgentTextStillValidatesReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*Receipt)
+	}{
+		{"original hash", func(r *Receipt) { r.Hash = attachments.Hash([]byte("edited")) }},
+		{"part count", func(r *Receipt) { r.Parts++ }},
+		{"render version", func(r *Receipt) { r.RenderVersion++ }},
+		{"artifact identity", func(r *Receipt) { r.Attachments[0].ArtifactID = "other" }},
+		{"artifact hash", func(r *Receipt) { r.Attachments[0].SHA256 = "other" }},
+		{"duplicate identity", func(*Receipt) {}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, mm, part := setup()
+			part.AllowTextEdits = true
+			if err := p.Publish(t.Context(), part); err != nil {
+				t.Fatal(err)
+			}
+			mm.posts[0].Message = "edited"
+			mm.posts[0].EditAt = 1
+			var receipt Receipt
+			if err := json.Unmarshal(mm.posts[0].Props[Property], &receipt); err != nil {
+				t.Fatal(err)
+			}
+			tc.change(&receipt)
+			raw, err := json.Marshal(receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mm.posts[0].Props[Property] = raw
+			if tc.name == "duplicate identity" {
+				duplicate := mm.posts[0]
+				duplicate.ID = "duplicate"
+				mm.posts = append(mm.posts, duplicate)
+			}
+			if err := p.Refresh(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Publish(t.Context(), part); !errors.Is(err, ErrConflict) {
+				t.Fatal("conflicting receipt accepted", err)
+			}
+			if mm.calls != 1 {
+				t.Fatal("conflict created another post")
+			}
+		})
+	}
+}
+
+func TestEditedChunkDoesNotBlockRemainingDelivery(t *testing.T) {
+	p, mm, _ := setup()
+	parts := Parts(p.Key, "session", "run", "answer", strings.Repeat("answer ", 100), conversation.Render{Version: 2, MaxChars: 64}, nil)
+	for i := range parts {
+		parts[i].AllowTextEdits = true
+	}
+	if len(parts) < 3 {
+		t.Fatal("fixture must span several posts")
+	}
+	if err := p.Publish(t.Context(), parts[0]); err != nil {
+		t.Fatal(err)
+	}
+	mm.posts[0].Message, mm.posts[0].EditAt = "edited first chunk", 1
+	p = &Publisher{MM: mm, Key: p.Key, BotID: p.BotID}
+	if err := p.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, part := range parts {
+		if err := p.Publish(t.Context(), part); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mm.calls != len(parts) || mm.posts[0].Message != "edited first chunk" {
+		t.Fatal("partial replay duplicated or overwrote the edited chunk")
+	}
+	for i := 1; i < len(parts); i++ {
+		if mm.posts[i].Message != parts[i].Text {
+			t.Fatal("remaining chunk lost or reordered", i)
+		}
+	}
+}
+
+func TestEditedAgentTextStillRepairsMissingAttachment(t *testing.T) {
+	p, mm, part := setup()
+	part.AllowTextEdits = true
+	if err := p.Publish(t.Context(), part); err != nil {
+		t.Fatal(err)
+	}
+	mm.posts[0].Message = "edited answer"
+	mm.posts[0].FileIDs = nil
+	mm.files["file"] = mattermost.FileInfo{ID: "file"}
+	for range 2 {
+		p = &Publisher{MM: mm, Key: p.Key, BotID: p.BotID}
+		if err := p.Refresh(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.Publish(t.Context(), part); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if mm.calls != 2 || mm.posts[0].Message != "edited answer" || len(mm.posts[1].FileIDs) != 1 || mm.posts[1].FileIDs[0] != "file" {
+		t.Fatal("edited text changed or missing attachment was not repaired once")
+	}
+	// Repair notices retain the connector's strict delivery contract.
+	mm.posts[1].Message = "edited repair notice"
+	if err := p.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Publish(t.Context(), part); !errors.Is(err, ErrConflict) {
+		t.Fatal("agent text policy leaked into a connector notice", err)
+	}
+}
 func TestUnicodeChunks(t *testing.T) {
 	parts := Split("абв🙂世界", 2)
 	if len(parts) != 3 || parts[1] != "в🙂" {
@@ -183,6 +322,7 @@ func TestUnicodeChunks(t *testing.T) {
 }
 func TestForgedReceiptIgnored(t *testing.T) {
 	p, mm, part := setup()
+	part.AllowTextEdits = true
 	if e := p.Publish(t.Context(), part); e != nil {
 		t.Fatal(e)
 	}
