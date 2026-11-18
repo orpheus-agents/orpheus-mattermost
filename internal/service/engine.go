@@ -177,8 +177,9 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 	}
 	p.SkipAttachments = p.NoticeExists("attachments_failed", r.ID)
 	defer func() { p.SkipAttachments = false }()
-	send := func(mid, text string, files []attachments.Artifact) error {
+	send := func(mid, text string, files []attachments.Artifact, allowTextEdits bool) error {
 		for _, part := range delivery.Parts(p.Key, s.ID, r.ID, mid, text, env.Render, files) {
+			part.AllowTextEdits = allowTextEdits
 			if err := p.Publish(ctx, part); err != nil {
 				if !errors.Is(err, delivery.ErrUpload) {
 					return err
@@ -206,7 +207,7 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 	if r.Terminal() && !stopped {
 		output, err = hookOutput(s, r, env, e.Bot.ID)
 		if err != nil {
-			if err = send("attachments_failed", "Could not deliver the result attachments.", nil); err != nil {
+			if err = send("attachments_failed", "Could not deliver the result attachments.", nil, false); err != nil {
 				return err
 			}
 			stopped = true
@@ -221,7 +222,7 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 		}
 		if m.Kind == "progress" {
 			if env.Render.Commentary && m.Text != "" {
-				if err = send(m.ID, m.Text, nil); err != nil {
+				if err = send(m.ID, m.Text, nil, true); err != nil {
 					return err
 				}
 			}
@@ -238,7 +239,7 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 			continue
 		}
 		hasAnswer = true
-		if err = send(m.ID, m.Text, files); err != nil {
+		if err = send(m.ID, m.Text, files, true); err != nil {
 			return err
 		}
 	}
@@ -246,16 +247,16 @@ func (e *Engine) publish(ctx context.Context, p *delivery.Publisher, s conversat
 		return nil
 	}
 	if r.FinalMessageID == "" && len(output.Files) > 0 {
-		if err = send("attachments_only", "", output.Files); err != nil {
+		if err = send("attachments_only", "", output.Files, false); err != nil {
 			return err
 		}
 		hasAnswer = true
 	}
 	if text := delivery.Failure(r, env.Render); text != "" {
-		return send("run_status", text, nil)
+		return send("run_status", text, nil, false)
 	}
 	if !hasAnswer && !stopped {
-		return send("empty_result", "Run finished without a text answer or files.", nil)
+		return send("empty_result", "Run finished without a text answer or files.", nil, false)
 	}
 	return nil
 }

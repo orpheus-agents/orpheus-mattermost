@@ -81,6 +81,7 @@ restart, permanent-failure and reload tests continue to exercise delivery safety
 | --- | --- |
 | Lost admission, edited source/config, accepted delivery states, rejected clarification transfer | `service/reconcile_test.go`, `service/engine_test.go` |
 | Connector restart, partial answer, lost POST after server cache expiry, attachment repair | `delivery/delivery_test.go`, `service/replay_test.go` |
+| Edited agent answers/progress, subsequent replies and output, preserved text/chunks, unchanged receipt and attachment validation | `delivery/delivery_test.go`, `service/edited_delivery_test.go` |
 | Missing/failed/truncated export, wrong bot, output still uploading | `service/fault_test.go` |
 | Commentary policy, multiple answers, file-only final answer, failed run | `service/fault_test.go` |
 | 32/33 clarification batches, optional SDK, before-run failure, finalizing and revoked scope | `service/reconcile_test.go`, `agentbox/access_test.go` |
