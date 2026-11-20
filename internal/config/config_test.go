@@ -325,3 +325,35 @@ func TestMattermostSettingsBelongToWorkflow(t *testing.T) {
 		t.Fatal("identity depends on token reference or ignores bot")
 	}
 }
+
+func TestProfileByTagFrontMatter(t *testing.T) {
+	dir := t.TempDir()
+	base := workflowText(t)
+	loadTags := func(field string) (*Workflow, error) {
+		t.Helper()
+		writeWorkflow(t, dir, "assistant.md", strings.Replace(base, "---\n", "---\n"+field+"\n", 1))
+		c, err := example(t, map[string]string{"WORKFLOWS_DIR": dir})
+		if err != nil {
+			return nil, err
+		}
+		return &c.Workflows[0], nil
+	}
+	plain, err := loadTags("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"profile_by_tag: {}", "profile_by_tag: {sl-deepseek: Selectel, alias_2: Selectel}", "profile_by_tag: {sl-deepseek: Another}"} {
+		w, err := loadTags(field)
+		if err != nil || w.EffectiveRevision != plain.EffectiveRevision {
+			t.Fatal("mapping changed revision", field, err)
+		}
+		if strings.Contains(field, "alias_2") && !maps.Equal(w.ProfileByTag, map[string]string{"sl-deepseek": "Selectel", "alias_2": "Selectel"}) {
+			t.Fatal(w.ProfileByTag)
+		}
+	}
+	for _, field := range []string{"[]", "null", "true", "{GLM: profile}", "{'#glm': profile}", "{glm: ' '}", "{glm: null}", "{glm: []}", "{glm: 12}", "{glm: a, glm: b}", "{1: name}"} {
+		if _, err := loadTags("profile_by_tag: " + field); err == nil {
+			t.Errorf("accepted invalid mapping %s", field)
+		}
+	}
+}

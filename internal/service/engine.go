@@ -299,7 +299,7 @@ func joinedInput(messages []conversation.InputMessage) string {
 	return out.String()
 }
 
-func transfer(snapshot conversation.Snapshot) (conversation.Envelope, []conversation.InputMessage, string, bool) {
+func transfer(snapshot conversation.Snapshot, rejected map[string]bool) (conversation.Envelope, []conversation.InputMessage, string, bool) {
 	descendants := map[string]bool{}
 	for _, s := range snapshot.Sessions {
 		for _, m := range s.Messages {
@@ -311,7 +311,7 @@ func transfer(snapshot conversation.Snapshot) (conversation.Envelope, []conversa
 	}
 	for _, s := range snapshot.Sessions {
 		for index, m := range s.Messages {
-			if m.Role != "user" || m.Delivery != "rejected" || m.Error != "run_finished_before_delivery" || descendants[m.ID] {
+			if m.Role != "user" || m.Delivery != "rejected" || m.Error != "run_finished_before_delivery" || descendants[m.ID] || rejected[m.ID] {
 				continue
 			}
 			env, err := conversation.Decode(m.Metadata)
@@ -441,7 +441,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 		}
 		initial = false
 	}
-	rejected := p.Rejected(w.EffectiveRevision)
+	rejected, rejectedTransfers := p.Rejected(w.EffectiveRevision)
 	posts := slices.DeleteFunc(slices.Clone(p.Posts), func(post mattermost.Post) bool { return rejected[post.ID] })
 	builder := conversation.Builder{Source: e.MM, Config: e.Config, Workflow: w, Bot: e.Bot}
 	env, messages, buildErr := builder.BuildMessages(ctx, key, channel, posts, snapshot, initial, time.Now())
@@ -452,7 +452,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 		}
 	}
 	if run == nil {
-		if t, body, pred, ok := transfer(snapshot); ok {
+		if t, body, pred, ok := transfer(snapshot, rejectedTransfers); ok {
 			if initial {
 				env, messages, buildErr = builder.RebuildTransfer(ctx, key, channel, posts, snapshot, t, body, time.Now())
 			} else {
@@ -476,6 +476,9 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 			}
 		}
 		return buildErr
+	}
+	if errors.Is(buildErr, conversation.ErrConflictingProfileTags) {
+		return e.reject(ctx, p, env, messages, "Choose one model profile in the opening message and edit its tags.")
 	}
 	if buildErr != nil {
 		return e.reject(ctx, p, env, messages, "Message exceeds the input size limit. Split the request.")
@@ -604,6 +607,7 @@ func (e *Engine) reject(ctx context.Context, p *delivery.Publisher, env conversa
 	identity, _ := json.Marshal([3]string{env.Revision, reason, inputHash})
 	parts := delivery.Parts(p.Key, "", env.Anchor+":"+attachments.Hash(identity), "input_rejected", reason, env.Render, nil)
 	for _, part := range parts {
+		part.Receipt.Predecessor = env.Predecessor
 		part.Receipt.TriggerIDs = env.TriggerIDs
 		for _, v := range env.Versions {
 			if slices.Contains(env.TriggerIDs, v.ID) {

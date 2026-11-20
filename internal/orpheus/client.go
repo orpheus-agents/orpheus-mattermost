@@ -3,6 +3,7 @@ package orpheus
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -318,6 +319,7 @@ func (c *Client) Snapshot(ctx context.Context, key conversation.Key) (conversati
 			pendingBatch[m.RunID] = false
 			if s.Revision == "" {
 				s.Revision = e.Revision
+				s.ProfileOverride = e.ProfileOverride
 			}
 		}
 		for _, open := range pendingBatch {
@@ -399,7 +401,7 @@ func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.E
 		request = runBody
 	default:
 		operation = "session"
-		conf := api.ConfigurationInput{Agent: api.AgentInput{Profile: w.Profile, Instructions: new(w.Instructions)}, Sandbox: api.SandboxInput{Template: w.SandboxTemplate}, Limits: &api.LimitsInput{RunTimeoutSeconds: &w.RunTimeoutSeconds, MaxSessionTokens: &w.MaxSessionTokens}, Hooks: &api.HooksInput{BeforeRun: new(sandbox.BeforeRun()), AfterRun: new(sandbox.AfterRun()), TimeoutSeconds: &w.HookTimeoutSeconds}}
+		conf := api.ConfigurationInput{Agent: api.AgentInput{Profile: cmp.Or(e.ProfileOverride, w.Profile), Instructions: new(w.Instructions)}, Sandbox: api.SandboxInput{Template: w.SandboxTemplate}, Limits: &api.LimitsInput{RunTimeoutSeconds: &w.RunTimeoutSeconds, MaxSessionTokens: &w.MaxSessionTokens}, Hooks: &api.HooksInput{BeforeRun: new(sandbox.BeforeRun()), AfterRun: new(sandbox.AfterRun()), TimeoutSeconds: &w.HookTimeoutSeconds}}
 		if len(w.EnvFrom) > 0 {
 			conf.Sandbox.EnvFrom = &w.EnvFrom
 		}

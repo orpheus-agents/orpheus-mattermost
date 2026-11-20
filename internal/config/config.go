@@ -80,6 +80,8 @@ type Workflow struct {
 	Instructions          string    `yaml:"-"`
 	Since                 time.Time `yaml:"-"`
 	EffectiveRevision     string    `yaml:"-"`
+
+	ProfileByTag map[string]string `yaml:"-" json:"-"` // Admission policy, excluded from session revision.
 }
 type Config struct {
 	AgentBoxAPIURL     string
@@ -94,6 +96,7 @@ type Config struct {
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
 var envPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var profileTagPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 var servicePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 var idPattern = regexp.MustCompile(`^[a-z0-9]{26}$`)
 
@@ -168,10 +171,13 @@ func parseWorkflow(raw []byte) (Workflow, error) {
 		if strings.TrimSpace(lines[i]) != "---" {
 			continue
 		}
-		var w Workflow
+		var front struct {
+			Workflow `yaml:",inline"`
+			Tags     yaml.Node `yaml:"profile_by_tag"`
+		}
 		decoder := yaml.NewDecoder(strings.NewReader(strings.Join(lines[1:i], "\n")))
 		decoder.KnownFields(true)
-		if err := decoder.Decode(&w); err != nil {
+		if err := decoder.Decode(&front); err != nil {
 			// Do not include YAML values: malformed deployment files can contain secrets.
 			return Workflow{}, errors.New("invalid YAML front matter (unknown field, duplicate key or invalid type)")
 		}
@@ -179,10 +185,36 @@ func parseWorkflow(raw []byte) (Workflow, error) {
 		if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 			return Workflow{}, errors.New("front matter must contain exactly one YAML document")
 		}
+		w := front.Workflow
+		if !front.Tags.IsZero() {
+			tags, err := parseProfileTags(&front.Tags)
+			if err != nil {
+				return Workflow{}, err
+			}
+			w.ProfileByTag = tags
+		}
 		w.Instructions = strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
 		return w, nil
 	}
 	return Workflow{}, errors.New("YAML front matter is not closed")
+}
+
+// Preserve YAML scalar types so null or numeric values cannot select a profile.
+func parseProfileTags(node *yaml.Node) (map[string]string, error) {
+	var entries map[any]any
+	if err := node.Decode(&entries); err != nil || entries == nil {
+		return nil, errors.New("profile_by_tag must be a mapping with unique keys")
+	}
+	tags := make(map[string]string, len(entries))
+	for key, value := range entries {
+		tag, validTag := key.(string)
+		profile, validProfile := value.(string)
+		if !validTag || !profileTagPattern.MatchString(tag) || !validProfile || strings.TrimSpace(profile) == "" {
+			return nil, errors.New("profile_by_tag requires lowercase tag names and nonempty string profiles")
+		}
+		tags[tag] = profile
+	}
+	return tags, nil
 }
 func validURL(raw string) bool {
 	u, e := url.Parse(raw)

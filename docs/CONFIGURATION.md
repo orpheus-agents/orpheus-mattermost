@@ -147,6 +147,7 @@ semantic setting.
 
 | Field | Default | Behavior |
 | --- | --- | --- |
+| `profile_by_tag` | `{}` | Model profile names users can select in the opening request |
 | `services` | `[]` | Unique catalog codes passed as `configuration.sandbox.services` to the agent session |
 | `env_from` | `[]` | Worker ENV names passed as `configuration.sandbox.env_from` to the agent session |
 | `include_ids`, `exclude_ids` | `[]` | Specialized workflows reserve their channels ahead of a generic workflow; they do not opt in to private or group channels |
@@ -165,6 +166,41 @@ semantic setting.
 | `max_session_tokens` | `100000000` | Session token budget |
 | `max_post_chars` | `12000` | Unicode code points, also capped by the server limit |
 | `initial_context_token_budget` | `100000` | Approximate context budget, with separate API/ENV byte checks |
+
+### Select a model profile in the opening request
+
+```yaml
+profile: default
+profile_by_tag:
+  deepseek: yandex-deepseek
+  sl-deepseek: selectel-deepseek
+  glm: selectel-glm
+```
+
+With this workflow, `@orpheus investigate #sl-deepseek` starts the thread on
+`selectel-deepseek`. Without a configured tag, the workflow uses `profile`.
+A tag selects only the model profile. Choose a `sandbox_template` compatible
+with every profile offered by the workflow.
+
+The first eligible post selects the profile, including a reply that first
+mentions the bot in an existing discussion. In a batch, the earliest trigger
+wins (post ID breaks timestamp ties). The usual author and mention rules apply.
+Later posts, linked threads and attachments cannot change the choice.
+
+Write a standalone tag in ordinary Markdown text. Matching ignores ASCII case
+and allows trailing punctuation. Code spans, code blocks, quotes, links, images
+and escaped tags are skipped. The agent receives the original message.
+Keys must match `[a-z][a-z0-9_-]*` without the leading `#`. Values are exact
+Orpheus profile names. Repeated tags and aliases for one profile are allowed.
+If the opening post selects different profiles, the bot asks the author to
+edit it. Other triggers in the batch remain eligible.
+
+The choice survives edits, restarts and sandbox replacement. Reloading the tag
+map affects new threads. Threads without an explicit choice use the current
+workflow default when they need a replacement session. An unavailable selected
+profile produces the usual Orpheus rejection notice.
+
+### Trigger and channel policy
 
 The connector accepts its own bot's posts only when `root_id` is empty and the
 message explicitly mentions the bot's current username. This rule applies in

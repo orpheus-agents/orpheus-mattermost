@@ -305,6 +305,18 @@ func (b Builder) buildMessages(ctx context.Context, key Key, channel mattermost.
 	if transferred == nil && b.Workflow.MessageBatchWindow.Value() > 0 && now.UnixMilli() < end {
 		return Envelope{}, nil, nil
 	}
+	base := Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: b.Workflow.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: anchor.ID, Kind: "initial", Render: Render{renderVersion, b.Workflow.MaxPostChars, *b.Workflow.SendCommentary}}
+	if !existing {
+		profile, err := taggedProfile(anchor.Message, b.Workflow.ProfileByTag)
+		if err != nil {
+			base.TriggerIDs = []string{anchor.ID}
+			base.Versions = []Version{PostVersion(anchor)}
+			return base, []InputMessage{{PostID: anchor.ID, Text: anchor.Message}}, err
+		}
+		base.ProfileOverride = profile
+	} else if initial {
+		base.ProfileOverride = snapshot.Sessions[len(snapshot.Sessions)-1].ProfileOverride
+	}
 	var triggers []mattermost.Post
 	for _, p := range candidates {
 		if p.CreateAt <= end {
@@ -368,13 +380,15 @@ func (b Builder) buildMessages(ctx context.Context, key Key, channel mattermost.
 				}
 			}
 			chosen := initialContext(eligible, mandatory, key.Root, budget)
-			e := Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: b.Workflow.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: anchor.ID, WindowEnd: cutoff, Kind: "initial", Render: Render{renderVersion, b.Workflow.MaxPostChars, *b.Workflow.SendCommentary}}
+			e := base
+			e.WindowEnd = cutoff
 			for _, p := range triggers[:count] {
 				e.TriggerIDs = append(e.TriggerIDs, p.ID)
 			}
 			e.Request = attachments.Request{Schema: 1, BotID: b.Bot.ID, SourceID: key.Source, ChannelID: key.Channel, RootID: key.Root, AnchorID: anchor.ID, Limits: b.Workflow.Files, Files: []attachments.InputFile{}}
 			if transferred != nil {
 				e = transferred.envelope
+				e.ProfileOverride = base.ProfileOverride
 				e.Revision = b.Workflow.EffectiveRevision
 				e.ContextIDs = slices.DeleteFunc(slices.Clone(e.ContextIDs), func(id string) bool { return !frozenPosts[id] })
 				e.Versions = slices.DeleteFunc(slices.Clone(e.Versions), func(v Version) bool { return !frozenPosts[v.ID] })
