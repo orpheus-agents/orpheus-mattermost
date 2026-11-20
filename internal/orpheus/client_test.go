@@ -238,6 +238,7 @@ func TestSessionPagination(t *testing.T) {
 func TestSnapshotReadsMessageMetadata(t *testing.T) {
 	key := conversation.Key{Source: "chat", Workflow: "assistant", Channel: strings.Repeat("a", 26), Root: strings.Repeat("b", 26)}
 	envelope := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Channel: key.Channel, Root: key.Root, Anchor: strings.Repeat("c", 26), Kind: "initial", TriggerIDs: []string{strings.Repeat("c", 26)}, Render: conversation.Render{Version: 2, MaxChars: 12000}}
+	envelope.ProfileOverride = "alternate"
 	sid, rid := uuid.NewString(), uuid.NewString()
 	includeMetadata := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +268,7 @@ func TestSnapshotReadsMessageMetadata(t *testing.T) {
 	}
 	message := snapshot.Sessions[0].Messages[0]
 	decoded, err := conversation.Decode(message.Metadata)
-	if err != nil || decoded.Anchor != envelope.Anchor || message.Text != "clean task" {
+	if err != nil || decoded.Anchor != envelope.Anchor || message.Text != "clean task" || snapshot.Sessions[0].ProfileOverride != "alternate" {
 		t.Fatalf("bad input snapshot: %+v %v", message, err)
 	}
 	includeMetadata = false
@@ -455,6 +456,36 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 					t.Fatal(err)
 				}
 			})
+		}
+	}
+}
+
+func TestCreateSessionProfile(t *testing.T) {
+	for _, tc := range []struct{ override, want string }{{"", "default"}, {"alternate", "alternate"}, {"default", "default"}} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				Configuration struct{ Agent struct{ Profile string } }
+				Messages      []struct{ Metadata map[string]any }
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+				return
+			}
+			profile, explicit := body.Messages[0].Metadata["profile_override"]
+			if body.Configuration.Agent.Profile != tc.want || explicit != (tc.override != "") || explicit && profile != tc.override {
+				t.Errorf("configuration profile %q, metadata %v", body.Configuration.Agent.Profile, profile)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": uuid.NewString(), "run_id": uuid.NewString(), "message_id": uuid.NewString()})
+		}))
+		c, err := New(config.Config{Orpheus: config.Endpoint{BaseURL: server.URL}, MaxRequestBytes: 1 << 20}, "token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = c.Submit(t.Context(), config.Workflow{Profile: "default"}, conversation.Envelope{ProfileOverride: tc.override}, []conversation.InputMessage{{Text: "task"}}, "", "", "")
+		server.Close()
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }

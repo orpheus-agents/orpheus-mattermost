@@ -74,6 +74,8 @@ type Envelope struct {
 	Request     attachments.Request `json:"input"`
 	Render      Render              `json:"render"`
 	Predecessor string              `json:"predecessor,omitempty"`
+
+	ProfileOverride string `json:"profile_override,omitempty"`
 }
 
 func (e Envelope) Key() Key                { return Key{e.Source, e.Workflow, e.Channel, e.Root} }
@@ -144,6 +146,7 @@ type Session struct {
 	TotalTokens       int64
 	MaxTokens         int64
 	Revision          string
+	ProfileOverride   string
 	Runs              []Run
 	Messages          []Message
 }

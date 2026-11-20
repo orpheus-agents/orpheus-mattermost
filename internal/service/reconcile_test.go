@@ -34,7 +34,7 @@ func (f *fakeAPI) Submit(_ context.Context, w config.Workflow, env conversation.
 	f.submitted = append(f.submitted, pending{Workflow: w, Envelope: env, Messages: messages, Session: sid, Run: rid, Predecessor: pred})
 	if sid == "" {
 		sid = uuid.NewString()
-		f.snapshot.Sessions = append(f.snapshot.Sessions, conversation.Session{ID: sid, AllowMultipleRuns: true, Revision: w.EffectiveRevision, MaxTokens: 1000000})
+		f.snapshot.Sessions = append(f.snapshot.Sessions, conversation.Session{ID: sid, AllowMultipleRuns: true, Revision: w.EffectiveRevision, ProfileOverride: env.ProfileOverride, MaxTokens: 1000000})
 	}
 	s := &f.snapshot.Sessions[len(f.snapshot.Sessions)-1]
 	if rid == "" {

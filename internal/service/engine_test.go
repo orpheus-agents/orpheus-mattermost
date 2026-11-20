@@ -23,7 +23,7 @@ func TestTransferOnlyRejectedClarificationsAfterCompletion(t *testing.T) {
 		t.Run(tc.kind+tc.status+tc.stop, func(t *testing.T) {
 			env := input(tc.kind)
 			snap := conversation.Snapshot{Sessions: []conversation.Session{{Messages: []conversation.Message{{ID: "message", RunID: "run", Role: "user", Delivery: "rejected", Error: "run_finished_before_delivery", Text: "actual user request", Metadata: testMetadata(env)}}, Runs: []conversation.Run{{ID: "run", Status: tc.status, StopReason: tc.stop}}}}}
-			e, body, pred, ok := transfer(snap)
+			e, body, pred, ok := transfer(snap, nil)
 			if ok != tc.want {
 				t.Fatal(ok)
 			}
@@ -33,7 +33,7 @@ func TestTransferOnlyRejectedClarificationsAfterCompletion(t *testing.T) {
 			if ok {
 				e.Predecessor = pred
 				snap.Sessions[0].Messages = append(snap.Sessions[0].Messages, conversation.Message{Text: joinedInput(body), Metadata: testMetadata(e)})
-				if _, _, _, ok = transfer(snap); ok {
+				if _, _, _, ok = transfer(snap, nil); ok {
 					t.Fatal("transferred twice")
 				}
 			}
@@ -47,7 +47,7 @@ func TestTransferPreservesSeparateClarificationMessages(t *testing.T) {
 		{ID: "first", RunID: "run", Role: "user", Delivery: "rejected", Text: "first post"},
 		{ID: "last", RunID: "run", Role: "user", Delivery: "rejected", Error: "run_finished_before_delivery", Text: "second post", Metadata: testMetadata(env)},
 	}, Runs: []conversation.Run{{ID: "run", Status: "completed"}}}}}
-	got, messages, predecessor, ok := transfer(snap)
+	got, messages, predecessor, ok := transfer(snap, nil)
 	if !ok || got.Kind != "initial" || predecessor != "last" || len(messages) != 2 || messages[0].Text != "first post" || messages[1].Text != "second post" {
 		t.Fatalf("clarification transfer merged posts: %+v %+v %s %v", got, messages, predecessor, ok)
 	}
@@ -59,7 +59,7 @@ func TestTransferOmitsAlreadyDeliveredClarification(t *testing.T) {
 		{ID: "first", RunID: "run", Role: "user", Delivery: "delivered", Text: "already delivered"},
 		{ID: "last", RunID: "run", Role: "user", Delivery: "rejected", Error: "run_finished_before_delivery", Text: "retry this", Metadata: testMetadata(env)},
 	}, Runs: []conversation.Run{{ID: "run", Status: "completed"}}}}}
-	_, messages, _, ok := transfer(snap)
+	_, messages, _, ok := transfer(snap, nil)
 	if !ok || len(messages) != 1 || messages[0].Text != "retry this" {
 		t.Fatalf("transfer duplicated delivered input: %+v", messages)
 	}

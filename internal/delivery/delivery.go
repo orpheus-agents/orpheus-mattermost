@@ -21,6 +21,7 @@ var ErrConflict = errors.New("delivery receipt conflict")
 var ErrUpload = errors.New("attachment requires upload recovery")
 
 type Receipt struct {
+	Predecessor   string                 `json:"predecessor,omitempty"`
 	Schema        int                    `json:"schema"`
 	Source        string                 `json:"source"`
 	Workflow      string                 `json:"workflow"`
@@ -131,7 +132,8 @@ func (p *Publisher) NoticeExists(kind, run string) bool {
 	}
 	return false
 }
-func (p *Publisher) Rejected(revision string) map[string]bool {
+func (p *Publisher) Rejected(revision string) (posts, transfers map[string]bool) {
+	transfers = map[string]bool{}
 	ids := map[string]bool{}
 	current := map[string]mattermost.Post{}
 	for _, post := range p.Posts {
@@ -142,6 +144,9 @@ func (p *Publisher) Rejected(revision string) map[string]bool {
 		if !ok || r.MessageID != "input_rejected" || r.Hash != attachments.Hash([]byte(post.Message)) || r.InputHash == "" || r.Revision != revision {
 			continue
 		}
+		if r.Predecessor != "" {
+			transfers[r.Predecessor] = true
+		}
 		for _, v := range r.InputVersions {
 			source, exists := current[v.ID]
 			if exists && slices.Contains(r.TriggerIDs, v.ID) && conversation.PostVersion(source) == v {
@@ -149,7 +154,7 @@ func (p *Publisher) Rejected(revision string) map[string]bool {
 			}
 		}
 	}
-	return ids
+	return ids, transfers
 }
 
 // Publish verifies persisted receipts first. Partial attachment creates a repair
