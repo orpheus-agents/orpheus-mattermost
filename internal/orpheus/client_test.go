@@ -237,8 +237,8 @@ func TestSessionPagination(t *testing.T) {
 
 func TestSnapshotReadsMessageMetadata(t *testing.T) {
 	key := conversation.Key{Source: "chat", Workflow: "assistant", Channel: strings.Repeat("a", 26), Root: strings.Repeat("b", 26)}
-	envelope := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Channel: key.Channel, Root: key.Root, Anchor: strings.Repeat("c", 26), Kind: "initial", TriggerIDs: []string{strings.Repeat("c", 26)}, Render: conversation.Render{Version: 2, MaxChars: 12000}}
-	envelope.ProfileOverride = "alternate"
+	envelope := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Channel: key.Channel, Root: key.Root, Anchor: strings.Repeat("c", 26), Kind: "initial", TriggerIDs: []string{strings.Repeat("c", 26)}, Render: conversation.Render{Version: 2, MaxChars: 12000},
+		TagTarget: config.TagTarget{Profile: "alternate", SandboxTemplate: "opencode"}}
 	sid, rid := uuid.NewString(), uuid.NewString()
 	includeMetadata := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -268,8 +268,15 @@ func TestSnapshotReadsMessageMetadata(t *testing.T) {
 	}
 	message := snapshot.Sessions[0].Messages[0]
 	decoded, err := conversation.Decode(message.Metadata)
-	if err != nil || decoded.Anchor != envelope.Anchor || message.Text != "clean task" || snapshot.Sessions[0].ProfileOverride != "alternate" {
+	if err != nil || decoded.Anchor != envelope.Anchor || message.Text != "clean task" || snapshot.Sessions[0].TagTarget != envelope.TagTarget {
 		t.Fatalf("bad input snapshot: %+v %v", message, err)
+	}
+	// Earlier inputs stored only profile_override. Their next session inherits
+	// the workflow template even after the operator adds a template to that tag.
+	envelope.TagTarget.SandboxTemplate = ""
+	snapshot, err = c.Snapshot(t.Context(), key)
+	if err != nil || len(snapshot.Sessions) != 1 || snapshot.Sessions[0].TagTarget != (config.TagTarget{Profile: "alternate"}) {
+		t.Fatal("missing legacy profile selection", err)
 	}
 	includeMetadata = false
 	if _, err := c.Snapshot(t.Context(), key); err == nil {
@@ -460,20 +467,36 @@ func TestSubmitSeparatesSessionAndRunEnvironment(t *testing.T) {
 	}
 }
 
-func TestCreateSessionProfile(t *testing.T) {
-	for _, tc := range []struct{ override, want string }{{"", "default"}, {"alternate", "alternate"}, {"default", "default"}} {
+func TestCreateSessionTagTarget(t *testing.T) {
+	for _, tc := range []struct {
+		overrides                 config.TagTarget
+		wantProfile, wantTemplate string
+	}{
+		{config.TagTarget{}, "default", "codex"},
+		{config.TagTarget{Profile: "alternate"}, "alternate", "codex"},
+		{config.TagTarget{Profile: "default", SandboxTemplate: "opencode"}, "default", "opencode"},
+		{config.TagTarget{Profile: "alternate", SandboxTemplate: "opencode"}, "alternate", "opencode"},
+	} {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
-				Configuration struct{ Agent struct{ Profile string } }
-				Messages      []struct{ Metadata map[string]any }
+				Configuration struct {
+					Agent   struct{ Profile string }
+					Sandbox struct{ Template string }
+				}
+				Messages []struct{ Metadata map[string]any }
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Error(err)
 				return
 			}
-			profile, explicit := body.Messages[0].Metadata["profile_override"]
-			if body.Configuration.Agent.Profile != tc.want || explicit != (tc.override != "") || explicit && profile != tc.override {
-				t.Errorf("configuration profile %q, metadata %v", body.Configuration.Agent.Profile, profile)
+			if body.Configuration.Agent.Profile != tc.wantProfile || body.Configuration.Sandbox.Template != tc.wantTemplate {
+				t.Errorf("configuration %+v, want profile %q and template %q", body.Configuration, tc.wantProfile, tc.wantTemplate)
+			}
+			metadata := body.Messages[0].Metadata
+			for key, want := range map[string]string{"profile_override": tc.overrides.Profile, "sandbox_template_override": tc.overrides.SandboxTemplate} {
+				if value, exists := metadata[key]; exists != (want != "") || exists && value != want {
+					t.Errorf("%s = %v (present %t), want %q", key, value, exists, want)
+				}
 			}
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(map[string]string{"session_id": uuid.NewString(), "run_id": uuid.NewString(), "message_id": uuid.NewString()})
@@ -482,7 +505,7 @@ func TestCreateSessionProfile(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = c.Submit(t.Context(), config.Workflow{Profile: "default"}, conversation.Envelope{ProfileOverride: tc.override}, []conversation.InputMessage{{Text: "task"}}, "", "", "")
+		_, err = c.Submit(t.Context(), config.Workflow{Profile: "default", SandboxTemplate: "codex"}, conversation.Envelope{TagTarget: tc.overrides}, []conversation.InputMessage{{Text: "task"}}, "", "", "")
 		server.Close()
 		if err != nil {
 			t.Fatal(err)

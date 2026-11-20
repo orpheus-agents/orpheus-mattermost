@@ -75,7 +75,7 @@ type Envelope struct {
 	Render      Render              `json:"render"`
 	Predecessor string              `json:"predecessor,omitempty"`
 
-	ProfileOverride string `json:"profile_override,omitempty"`
+	config.TagTarget
 }
 
 func (e Envelope) Key() Key                { return Key{e.Source, e.Workflow, e.Channel, e.Root} }
@@ -146,7 +146,7 @@ type Session struct {
 	TotalTokens       int64
 	MaxTokens         int64
 	Revision          string
-	ProfileOverride   string
+	TagTarget         config.TagTarget
 	Runs              []Run
 	Messages          []Message
 }

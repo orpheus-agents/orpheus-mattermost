@@ -307,15 +307,15 @@ func (b Builder) buildMessages(ctx context.Context, key Key, channel mattermost.
 	}
 	base := Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Revision: b.Workflow.EffectiveRevision, Channel: key.Channel, Root: key.Root, Anchor: anchor.ID, Kind: "initial", Render: Render{renderVersion, b.Workflow.MaxPostChars, *b.Workflow.SendCommentary}}
 	if !existing {
-		profile, err := taggedProfile(anchor.Message, b.Workflow.ProfileByTag)
+		target, err := taggedProfile(anchor.Message, b.Workflow.ProfileByTag, b.Workflow.SandboxTemplate)
 		if err != nil {
 			base.TriggerIDs = []string{anchor.ID}
 			base.Versions = []Version{PostVersion(anchor)}
 			return base, []InputMessage{{PostID: anchor.ID, Text: anchor.Message}}, err
 		}
-		base.ProfileOverride = profile
+		base.TagTarget = target
 	} else if initial {
-		base.ProfileOverride = snapshot.Sessions[len(snapshot.Sessions)-1].ProfileOverride
+		base.TagTarget = snapshot.Sessions[len(snapshot.Sessions)-1].TagTarget
 	}
 	var triggers []mattermost.Post
 	for _, p := range candidates {
@@ -388,7 +388,7 @@ func (b Builder) buildMessages(ctx context.Context, key Key, channel mattermost.
 			e.Request = attachments.Request{Schema: 1, BotID: b.Bot.ID, SourceID: key.Source, ChannelID: key.Channel, RootID: key.Root, AnchorID: anchor.ID, Limits: b.Workflow.Files, Files: []attachments.InputFile{}}
 			if transferred != nil {
 				e = transferred.envelope
-				e.ProfileOverride = base.ProfileOverride
+				e.TagTarget = base.TagTarget
 				e.Revision = b.Workflow.EffectiveRevision
 				e.ContextIDs = slices.DeleteFunc(slices.Clone(e.ContextIDs), func(id string) bool { return !frozenPosts[id] })
 				e.Versions = slices.DeleteFunc(slices.Clone(e.Versions), func(v Version) bool { return !frozenPosts[v.ID] })
