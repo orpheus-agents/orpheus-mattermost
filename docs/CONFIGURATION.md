@@ -147,7 +147,7 @@ semantic setting.
 
 | Field | Default | Behavior |
 | --- | --- | --- |
-| `profile_by_tag` | `{}` | Model profile names users can select in the opening request |
+| `profile_by_tag` | `{}` | Profiles and optional sandbox templates selectable in the opening request |
 | `services` | `[]` | Unique catalog codes passed as `configuration.sandbox.services` to the agent session |
 | `env_from` | `[]` | Worker ENV names passed as `configuration.sandbox.env_from` to the agent session |
 | `include_ids`, `exclude_ids` | `[]` | Specialized workflows reserve their channels ahead of a generic workflow; they do not opt in to private or group channels |
@@ -171,34 +171,43 @@ semantic setting.
 
 ```yaml
 profile: default
+sandbox_template: orpheus-codex
 profile_by_tag:
-  deepseek: yandex-deepseek
-  sl-deepseek: selectel-deepseek
-  glm: selectel-glm
+  fast:
+    profile: codex-fast
+  sl-deepseek:
+    profile: selectel-deepseek
+    sandbox_template: orpheus-opencode
 ```
 
-With this workflow, `@orpheus investigate #sl-deepseek` starts the thread on
-`selectel-deepseek`. Without a configured tag, the workflow uses `profile`.
-A tag selects only the model profile. Choose a `sandbox_template` compatible
-with every profile offered by the workflow.
+With this workflow, `@orpheus investigate #sl-deepseek` uses the
+`selectel-deepseek` profile and the `orpheus-opencode` template. With
+`#fast` it uses `codex-fast` and inherits `orpheus-codex`. With no matching
+tag it uses both workflow defaults.
 
-The first eligible post selects the profile, including a reply that first
-mentions the bot in an existing discussion. In a batch, the earliest trigger
+Each entry requires `profile`. An optional `sandbox_template` selects the exact
+template name in the Orpheus catalog. For workflows using the v0.7 string
+syntax, replace entries such as `fast: codex-fast` with
+`fast: {profile: codex-fast}` when upgrading the connector.
+
+The first eligible post selects the profile and template. It can be a reply
+that first mentions the bot in an existing discussion. In a batch, the earliest trigger
 wins (post ID breaks timestamp ties). The usual author and mention rules apply.
 Later posts, linked threads and attachments cannot change the choice.
 
 Write a standalone tag in ordinary Markdown text. Matching ignores ASCII case
 and allows trailing punctuation. Code spans, code blocks, quotes, links, images
 and escaped tags are skipped. The agent receives the original message.
-Keys must match `[a-z][a-z0-9_-]*` without the leading `#`. Values are exact
-Orpheus profile names. Repeated tags and aliases for one profile are allowed.
-If the opening post selects different profiles, the bot asks the author to
-edit it. Other triggers in the batch remain eligible.
+Keys must match `[a-z][a-z0-9_-]*` without the leading `#`. Multiple tags
+may select the same profile and effective template. If either differs, the
+bot asks the author to edit the opening post. Other triggers in the batch
+remain eligible.
 
-The choice survives edits, restarts and sandbox replacement. Reloading the tag
-map affects new threads. Threads without an explicit choice use the current
-workflow default when they need a replacement session. An unavailable selected
-profile produces the usual Orpheus rejection notice.
+Explicit choices survive edits, restarts and sandbox replacement. Reloading
+the tag map affects new threads. When a replacement session needs an inherited
+profile or template, it takes the current workflow default. If two matching
+aliases select the same template and one names it explicitly, it stays pinned.
+An unavailable profile or template produces the usual Orpheus rejection notice.
 
 ### Trigger and channel policy
 

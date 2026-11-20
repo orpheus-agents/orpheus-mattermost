@@ -11,7 +11,7 @@ import (
 func TestOpeningProfileSurvivesBatchReplayAndRotation(t *testing.T) {
 	e, api, mm, _, key := fixture(t)
 	w := e.Config.Workflows[0]
-	w.ProfileByTag = map[string]string{"sl-deepseek": "tagged", "glm": "another"}
+	w.ProfileByTag = map[string]config.TagTarget{"sl-deepseek": {Profile: "tagged", SandboxTemplate: "opencode"}, "glm": {Profile: "another"}}
 	w.MessageBatchWindow = config.Duration(500 * time.Millisecond)
 	ch := mattermost.Channel{ID: key.Channel, Type: "O"}
 	mm.posts[0].Message = "passive #glm"
@@ -36,8 +36,8 @@ func TestOpeningProfileSurvivesBatchReplayAndRotation(t *testing.T) {
 		t.Fatal("lost response fixture did not fire")
 	}
 	p := api.submitted[0]
-	if p.Envelope.Anchor != anchor || len(p.Envelope.TriggerIDs) != 2 || p.Envelope.ProfileOverride != "tagged" {
-		t.Fatalf("initial selection %v/%s", p.Envelope.TriggerIDs, p.Envelope.ProfileOverride)
+	if p.Envelope.Anchor != anchor || len(p.Envelope.TriggerIDs) != 2 || p.Envelope.Profile != "tagged" {
+		t.Fatalf("initial selection %v/%s", p.Envelope.TriggerIDs, p.Envelope.Profile)
 	}
 	mm.posts[1].Message = "@orpheus исправлено #glm"
 	mm.posts[1].EditAt = 2200
@@ -64,15 +64,15 @@ func TestOpeningProfileSurvivesBatchReplayAndRotation(t *testing.T) {
 	add("wwwwwwwwwwwwwwwwwwwwwwwwww", "@orpheus продолжай #glm", 5500)
 	advance()
 	q := api.submitted[3]
-	if q.Envelope.ProfileOverride != "tagged" || len(api.snapshot.Sessions) != 2 {
-		t.Fatalf("rotation forgot choice: %v", q.Envelope.ProfileOverride)
+	if q.Envelope.TagTarget != (config.TagTarget{Profile: "tagged", SandboxTemplate: "opencode"}) || len(api.snapshot.Sessions) != 2 {
+		t.Fatalf("rotation forgot choice: %v", q.Envelope.Profile)
 	}
 }
 func TestConflictingProfileTagsRejectOnlyTheAnchor(t *testing.T) {
 	for _, withNeighbor := range []bool{false, true} {
 		e, api, mm, _, key := fixture(t)
 		w := e.Config.Workflows[0]
-		w.ProfileByTag = map[string]string{"sl-deepseek": "tagged", "glm": "another"}
+		w.ProfileByTag = map[string]config.TagTarget{"sl-deepseek": {Profile: "tagged", SandboxTemplate: "opencode"}, "glm": {Profile: "tagged", SandboxTemplate: "different-template"}}
 		w.MessageBatchWindow = config.Duration(500 * time.Millisecond)
 		ch := mattermost.Channel{ID: key.Channel, Type: "O"}
 		mm.posts[0].Message = "@orpheus #glm #sl-deepseek"
@@ -91,7 +91,7 @@ func TestConflictingProfileTagsRejectOnlyTheAnchor(t *testing.T) {
 		}
 		if withNeighbor {
 			advance()
-			if len(api.submitted) != 1 || api.submitted[0].Envelope.Anchor == key.Root || api.submitted[0].Envelope.ProfileOverride != "tagged" {
+			if len(api.submitted) != 1 || api.submitted[0].Envelope.Anchor == key.Root || api.submitted[0].Envelope.Profile != "tagged" {
 				t.Fatal("neighbor suppressed")
 			}
 		} else {
@@ -102,7 +102,7 @@ func TestConflictingProfileTagsRejectOnlyTheAnchor(t *testing.T) {
 			mm.posts[0].Message = "@orpheus #sl-deepseek"
 			mm.posts[0].EditAt = 2500
 			advance()
-			if len(api.submitted) != 1 || api.submitted[0].Envelope.ProfileOverride != "tagged" {
+			if len(api.submitted) != 1 || api.submitted[0].Envelope.Profile != "tagged" {
 				t.Fatal("edit could not start")
 			}
 		}
@@ -113,7 +113,7 @@ func TestReplacementInheritsExplicitProfileOnTransfer(t *testing.T) {
 	for _, tagged := range []bool{true, false} {
 		e, api, mm, _, key := fixture(t)
 		w := e.Config.Workflows[0]
-		w.ProfileByTag = map[string]string{"sl-deepseek": "tagged", "glm": "another"}
+		w.ProfileByTag = map[string]config.TagTarget{"sl-deepseek": {Profile: "tagged", SandboxTemplate: "opencode"}, "glm": {Profile: "another"}}
 		ch := mattermost.Channel{ID: key.Channel, Type: "O"}
 		advance := func() {
 			t.Helper()
@@ -134,25 +134,26 @@ func TestReplacementInheritsExplicitProfileOnTransfer(t *testing.T) {
 		s.Runs[0].Status = "completed"
 		s.SandboxState = "deleted"
 		w.Profile = "updated-base"
+		w.SandboxTemplate = "new-base-template"
 		w.EffectiveRevision = "updated"
-		w.ProfileByTag = map[string]string{"sl-deepseek": "changed-target", "glm": "ignored"}
+		w.ProfileByTag = map[string]config.TagTarget{"sl-deepseek": {Profile: "changed-target", SandboxTemplate: "new-template"}, "glm": {Profile: "ignored"}}
 		e = &Engine{Config: e.Config, API: api, MM: mm, Bot: e.Bot}
 		advance()
 		p := api.submitted[2]
-		want := ""
+		want := config.TagTarget{}
 		if tagged {
-			want = "tagged"
+			want = config.TagTarget{Profile: "tagged", SandboxTemplate: "opencode"}
 		}
-		if len(api.snapshot.Sessions) != 2 || p.Envelope.Predecessor != m.ID || p.Envelope.ProfileOverride != want {
-			t.Fatalf("transfer profile=%s expected=%s", p.Envelope.ProfileOverride, want)
+		if len(api.snapshot.Sessions) != 2 || p.Envelope.Predecessor != m.ID || p.Envelope.TagTarget != want {
+			t.Fatalf("transfer target=%+v expected=%+v", p.Envelope.TagTarget, want)
 		}
 	}
 }
 
-func TestUnavailableProfileOnTransferredClarification(t *testing.T) {
+func TestUnavailableTemplateOnTransferredClarification(t *testing.T) {
 	e, api, mm, _, key := fixture(t)
 	w := e.Config.Workflows[0]
-	w.ProfileByTag = map[string]string{"glm": "selected"}
+	w.ProfileByTag = map[string]config.TagTarget{"glm": {Profile: "selected", SandboxTemplate: "selected-template"}}
 	ch := mattermost.Channel{ID: key.Channel, Type: "O"}
 	advance := func() {
 		t.Helper()
@@ -170,7 +171,7 @@ func TestUnavailableProfileOnTransferredClarification(t *testing.T) {
 	m.Error = "run_finished_before_delivery"
 	session.Runs[0].Status = "completed"
 	session.SandboxState = "deleted"
-	bad := &rejectedAPI{fakeAPI: api, code: "unknown_profile"}
+	bad := &rejectedAPI{fakeAPI: api, code: "unknown_template"}
 	e.API = bad
 	advance()
 	mm.posts[1].Message = "@orpheus edited after rejection"
@@ -183,7 +184,7 @@ func TestUnavailableProfileOnTransferredClarification(t *testing.T) {
 	bad.code = ""
 	advance()
 	got := api.submitted[len(api.submitted)-1]
-	if got.Envelope.ProfileOverride != "selected" || got.Envelope.Predecessor != m.ID {
+	if got.Envelope.TagTarget != (config.TagTarget{Profile: "selected", SandboxTemplate: "selected-template"}) || got.Envelope.Predecessor != m.ID {
 		t.Fatal("transfer lost saved profile or identity")
 	}
 }

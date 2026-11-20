@@ -81,8 +81,15 @@ type Workflow struct {
 	Since                 time.Time `yaml:"-"`
 	EffectiveRevision     string    `yaml:"-"`
 
-	ProfileByTag map[string]string `yaml:"-" json:"-"` // Admission policy, excluded from session revision.
+	ProfileByTag map[string]TagTarget `yaml:"-" json:"-"` // Admission policy, excluded from session revision.
 }
+
+// TagTarget contains the explicit choices carried across session generations.
+type TagTarget struct {
+	Profile         string `json:"profile_override,omitempty"`
+	SandboxTemplate string `json:"sandbox_template_override,omitempty"`
+}
+
 type Config struct {
 	AgentBoxAPIURL     string
 	Orpheus            Endpoint
@@ -200,19 +207,40 @@ func parseWorkflow(raw []byte) (Workflow, error) {
 }
 
 // Preserve YAML scalar types so null or numeric values cannot select a profile.
-func parseProfileTags(node *yaml.Node) (map[string]string, error) {
+func parseProfileTags(node *yaml.Node) (map[string]TagTarget, error) {
 	var entries map[any]any
 	if err := node.Decode(&entries); err != nil || entries == nil {
 		return nil, errors.New("profile_by_tag must be a mapping with unique keys")
 	}
-	tags := make(map[string]string, len(entries))
+	tags := make(map[string]TagTarget, len(entries))
 	for key, value := range entries {
-		tag, validTag := key.(string)
-		profile, validProfile := value.(string)
-		if !validTag || !profileTagPattern.MatchString(tag) || !validProfile || strings.TrimSpace(profile) == "" {
-			return nil, errors.New("profile_by_tag requires lowercase tag names and nonempty string profiles")
+		tag, ok := key.(string)
+		if !ok || !profileTagPattern.MatchString(tag) {
+			return nil, errors.New("profile_by_tag requires lowercase tag names")
 		}
-		tags[tag] = profile
+		fields, ok := value.(map[string]any)
+		if !ok {
+			return nil, errors.New("each profile_by_tag entry must be a mapping with profile and optional sandbox_template")
+		}
+		var target TagTarget
+		for field, raw := range fields {
+			name, ok := raw.(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return nil, errors.New("profile_by_tag profile and sandbox_template must be nonempty strings")
+			}
+			switch field {
+			case "profile":
+				target.Profile = name
+			case "sandbox_template":
+				target.SandboxTemplate = name
+			default:
+				return nil, errors.New("unknown field in profile_by_tag entry")
+			}
+		}
+		if target.Profile == "" {
+			return nil, errors.New("profile_by_tag entry requires profile")
+		}
+		tags[tag] = target
 	}
 	return tags, nil
 }

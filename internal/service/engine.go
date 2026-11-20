@@ -478,7 +478,7 @@ func (e *Engine) reconcile(ctx context.Context, w config.Workflow, key conversat
 		return buildErr
 	}
 	if errors.Is(buildErr, conversation.ErrConflictingProfileTags) {
-		return e.reject(ctx, p, env, messages, "Choose one model profile in the opening message and edit its tags.")
+		return e.reject(ctx, p, env, messages, "Edit the opening message to select one profile and sandbox template.")
 	}
 	if buildErr != nil {
 		return e.reject(ctx, p, env, messages, "Message exceeds the input size limit. Split the request.")

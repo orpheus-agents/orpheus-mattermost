@@ -1,17 +1,19 @@
 package conversation
 
 import (
+	"cmp"
 	"errors"
 	"regexp"
 	"strings"
 
+	"github.com/orpheus-agents/orpheus-mattermost/internal/config"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/text"
 )
 
-var ErrConflictingProfileTags = errors.New("tags select different model profiles")
+var ErrConflictingProfileTags = errors.New("tags select different model profiles or sandbox templates")
 
 // Keep Markdown delimiters inside a bare URL in its link node (e.g. /path/**#tag**).
 var urlTail = regexp.MustCompile(`^[^\s\p{Z}<>\[\]"']+`)
@@ -21,13 +23,13 @@ var profileMarkdown = goldmark.New(goldmark.WithExtensions(extension.NewLinkify(
 var profileToken = regexp.MustCompile(`^#([A-Za-z][A-Za-z0-9_-]*)[.,;:!?…"'\p{Pe}\p{Pf}]*$`)
 
 // taggedProfile reads only literal prose in the post that first triggers the thread.
-func taggedProfile(body string, tags map[string]string) (string, error) {
+func taggedProfile(body string, tags map[string]config.TagTarget, defaultTemplate string) (config.TagTarget, error) {
 	if len(tags) == 0 || !strings.Contains(body, "#") {
-		return "", nil
+		return config.TagTarget{}, nil
 	}
 	source := []byte(body)
 	tree := profileMarkdown.Parser().Parse(text.NewReader(source))
-	var profile string
+	var target config.TagTarget
 	err := ast.Walk(tree, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -49,15 +51,17 @@ func taggedProfile(body string, tags map[string]string) (string, error) {
 			if !ok {
 				continue
 			}
-			if profile != "" && selected != profile {
+			if target.Profile != "" && (selected.Profile != target.Profile || cmp.Or(selected.SandboxTemplate, defaultTemplate) != cmp.Or(target.SandboxTemplate, defaultTemplate)) {
 				return ast.WalkStop, ErrConflictingProfileTags
 			}
-			profile = selected
+			// An explicit template stays pinned even when another alias inherits it.
+			target.Profile = selected.Profile
+			target.SandboxTemplate = cmp.Or(selected.SandboxTemplate, target.SandboxTemplate)
 		}
 		return ast.WalkContinue, nil
 	})
 	if err != nil {
-		return "", err
+		return config.TagTarget{}, err
 	}
-	return profile, nil
+	return target, nil
 }

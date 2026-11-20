@@ -342,16 +342,23 @@ func TestProfileByTagFrontMatter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"profile_by_tag: {}", "profile_by_tag: {sl-deepseek: Selectel, alias_2: Selectel}", "profile_by_tag: {sl-deepseek: Another}"} {
+	for _, field := range []string{"profile_by_tag: {}", "profile_by_tag: {sl-deepseek: {profile: Selectel, sandbox_template: team/opencode:dev}, alias_2: {profile: Selectel}}", "profile_by_tag: {sl-deepseek: {profile: Another, sandbox_template: another}}"} {
 		w, err := loadTags(field)
 		if err != nil || w.EffectiveRevision != plain.EffectiveRevision {
 			t.Fatal("mapping changed revision", field, err)
 		}
-		if strings.Contains(field, "alias_2") && !maps.Equal(w.ProfileByTag, map[string]string{"sl-deepseek": "Selectel", "alias_2": "Selectel"}) {
+		if strings.Contains(field, "alias_2") && !maps.Equal(w.ProfileByTag, map[string]TagTarget{"sl-deepseek": {Profile: "Selectel", SandboxTemplate: "team/opencode:dev"}, "alias_2": {Profile: "Selectel"}}) {
 			t.Fatal(w.ProfileByTag)
 		}
 	}
-	for _, field := range []string{"[]", "null", "true", "{GLM: profile}", "{'#glm': profile}", "{glm: ' '}", "{glm: null}", "{glm: []}", "{glm: 12}", "{glm: a, glm: b}", "{1: name}"} {
+	for _, field := range []string{
+		"[]", "null", "true", "{GLM: {profile: p}}", "{'#glm': {profile: p}}", "{1: {profile: p}}",
+		"{glm: p}", "{glm: null}", "{glm: []}", "{glm: 12}", "{glm: {}}", "{glm: {sandbox_template: t}}",
+		"{glm: {profile: ' '}}", "{glm: {profile: 123}}", "{glm: {profile: null}}",
+		"{glm: {profile: p, sandbox_template: null}}", "{glm: {profile: p, sandbox_template: ' '}}",
+		"{glm: {profile: p, sandbox_template: 123}}", "{glm: {profile: p, template: t}}",
+		"{glm: {profile: p, profile: q}}", "{glm: {profile: p}, glm: {profile: q}}",
+	} {
 		if _, err := loadTags("profile_by_tag: " + field); err == nil {
 			t.Errorf("accepted invalid mapping %s", field)
 		}

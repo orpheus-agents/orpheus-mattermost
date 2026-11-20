@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orpheus-agents/orpheus-mattermost/internal/config"
 	"github.com/orpheus-agents/orpheus-mattermost/internal/mattermost"
 )
 
 func TestTaggedProfileMarkdown(t *testing.T) {
-	tags := map[string]string{"glm": "A", "alias": "A", "sl-deepseek": "B", "k": "K"}
+	tags := map[string]config.TagTarget{"glm": {Profile: "A"}, "alias": {Profile: "A"}, "sl-deepseek": {Profile: "B"}, "k": {Profile: "K"}}
 	for _, tc := range []struct{ body, want string }{
 		{"#GLM?!", "A"}, {"#glm,other #glm)other #glm.example", ""}, {"please\u00a0#sl-deepseek…", "B"}, {"#glm #ALIAS #glm", "A"}, {"**#glm**", "A"},
 		{"#glm-extra #glm_2 #glm2 #glmя", ""}, {"word#glm \\#glm #unknown #K", ""},
@@ -20,13 +21,37 @@ func TestTaggedProfileMarkdown(t *testing.T) {
 		{"https://example.org/**#glm** www.example.org/#glm", ""},
 		{"[#glm][ref]\n\n[ref]: https://example.org", ""},
 	} {
-		got, err := taggedProfile(tc.body, tags)
-		if err != nil || got != tc.want {
-			t.Errorf("%q: got %q, %v; want %q", tc.body, got, err, tc.want)
+		got, err := taggedProfile(tc.body, tags, "base")
+		if err != nil || got.Profile != tc.want {
+			t.Errorf("%q: got %q, %v; want %q", tc.body, got.Profile, err, tc.want)
 		}
 	}
-	if _, err := taggedProfile("#GLM #sl-deepseek", tags); !errors.Is(err, ErrConflictingProfileTags) {
+	if _, err := taggedProfile("#GLM #sl-deepseek", tags, "base"); !errors.Is(err, ErrConflictingProfileTags) {
 		t.Fatal(err)
+	}
+}
+
+func TestProfileTagAliasesCompareEffectiveTemplates(t *testing.T) {
+	inherited := config.TagTarget{Profile: "research"}
+	standard := config.TagTarget{Profile: "research", SandboxTemplate: "standard"}
+	heavy := config.TagTarget{Profile: "research", SandboxTemplate: "heavy"}
+	tags := map[string]config.TagTarget{"a": inherited, "b": standard, "c": heavy, "d": heavy}
+	for _, tc := range []struct {
+		message  string
+		want     config.TagTarget
+		conflict bool
+	}{
+		{"#a #a", inherited, false},
+		{"#a #b", standard, false},
+		{"#b #a", standard, false},
+		{"#c #d", heavy, false},
+		{"#a #c", config.TagTarget{}, true},
+		{"#c #b", config.TagTarget{}, true},
+	} {
+		got, err := taggedProfile(tc.message, tags, "standard")
+		if got != tc.want || errors.Is(err, ErrConflictingProfileTags) != tc.conflict || !tc.conflict && err != nil {
+			t.Errorf("%s: got %+v, %v", tc.message, got, err)
+		}
 	}
 }
 
@@ -44,7 +69,7 @@ func TestOnlyEligibleOpeningPostSelectsProfile(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			b, key, _ := builder(t)
-			b.Workflow.ProfileByTag = map[string]string{"glm": "G"}
+			b.Workflow.ProfileByTag = map[string]config.TagTarget{"glm": {Profile: "G"}}
 			b.Workflow.StartOnMention = &tc.mention
 			p := mattermost.Post{ID: key.Root, ChannelID: key.Channel, UserID: id(1), CreateAt: 1000, Message: tc.message}
 			if tc.self {
@@ -55,8 +80,8 @@ func TestOnlyEligibleOpeningPostSelectsProfile(t *testing.T) {
 				p.ID = id(7)
 			}
 			env, body, err := buildJoined(b, t.Context(), key, mattermost.Channel{ID: key.Channel, Type: tc.kind}, []mattermost.Post{p}, Snapshot{}, true, time.Now())
-			if err != nil || (env.Anchor != "") != tc.accepted || tc.accepted && (env.ProfileOverride != "G" || !strings.Contains(body, p.Message)) {
-				t.Fatal(env.Anchor, env.ProfileOverride, err)
+			if err != nil || (env.Anchor != "") != tc.accepted || tc.accepted && (env.Profile != "G" || !strings.Contains(body, p.Message)) {
+				t.Fatal(env.Anchor, env.Profile, err)
 			}
 		})
 	}
