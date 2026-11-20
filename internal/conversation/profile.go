@@ -18,7 +18,7 @@ var urlTail = regexp.MustCompile(`^[^\s\p{Z}<>\[\]"']+`)
 var profileMarkdown = goldmark.New(goldmark.WithExtensions(extension.NewLinkify(
 	extension.WithLinkifyURLRegexp(urlTail), extension.WithLinkifyWWWRegexp(urlTail),
 )))
-var profileToken = regexp.MustCompile(`^#([A-Za-z][A-Za-z0-9_-]*)(?:$|[.,;:!?…"'\p{Pe}\p{Pf}])`)
+var profileToken = regexp.MustCompile(`^#([A-Za-z][A-Za-z0-9_-]*)[.,;:!?…"'\p{Pe}\p{Pf}]*$`)
 
 // taggedProfile reads only literal prose in the post that first triggers the thread.
 func taggedProfile(body string, tags map[string]string) (string, error) {

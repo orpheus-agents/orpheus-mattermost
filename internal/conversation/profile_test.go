@@ -12,7 +12,7 @@ import (
 func TestTaggedProfileMarkdown(t *testing.T) {
 	tags := map[string]string{"glm": "A", "alias": "A", "sl-deepseek": "B", "k": "K"}
 	for _, tc := range []struct{ body, want string }{
-		{"#GLM!", "A"}, {"please\u00a0#sl-deepseek…", "B"}, {"#glm #ALIAS #glm", "A"}, {"**#glm**", "A"},
+		{"#GLM?!", "A"}, {"#glm,other #glm)other #glm.example", ""}, {"please\u00a0#sl-deepseek…", "B"}, {"#glm #ALIAS #glm", "A"}, {"**#glm**", "A"},
 		{"#glm-extra #glm_2 #glm2 #glmя", ""}, {"word#glm \\#glm #unknown #K", ""},
 		{"\u0060#glm\u0060\n\n    #glm\n\n~~~\n#glm\n~~~", ""},
 		{"> #glm\n> **#alias**\n\n#sl-deepseek", "B"},
