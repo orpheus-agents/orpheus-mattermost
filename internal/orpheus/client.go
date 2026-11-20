@@ -401,7 +401,7 @@ func (c *Client) Submit(ctx context.Context, w config.Workflow, e conversation.E
 		request = runBody
 	default:
 		operation = "session"
-		conf := api.ConfigurationInput{Agent: api.AgentInput{Profile: cmp.Or(e.TagTarget.Profile, w.Profile), Instructions: new(w.Instructions)}, Sandbox: api.SandboxInput{Template: cmp.Or(e.TagTarget.SandboxTemplate, w.SandboxTemplate)}, Limits: &api.LimitsInput{RunTimeoutSeconds: &w.RunTimeoutSeconds, MaxSessionTokens: &w.MaxSessionTokens}, Hooks: &api.HooksInput{BeforeRun: new(sandbox.BeforeRun()), AfterRun: new(sandbox.AfterRun()), TimeoutSeconds: &w.HookTimeoutSeconds}}
+		conf := api.ConfigurationInput{Agent: api.AgentInput{Profile: cmp.Or(e.Profile, w.Profile), Instructions: new(w.Instructions)}, Sandbox: api.SandboxInput{Template: cmp.Or(e.SandboxTemplate, w.SandboxTemplate)}, Limits: &api.LimitsInput{RunTimeoutSeconds: &w.RunTimeoutSeconds, MaxSessionTokens: &w.MaxSessionTokens}, Hooks: &api.HooksInput{BeforeRun: new(sandbox.BeforeRun()), AfterRun: new(sandbox.AfterRun()), TimeoutSeconds: &w.HookTimeoutSeconds}}
 		if len(w.EnvFrom) > 0 {
 			conf.Sandbox.EnvFrom = &w.EnvFrom
 		}

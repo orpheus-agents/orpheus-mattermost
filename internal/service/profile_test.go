@@ -36,8 +36,8 @@ func TestOpeningProfileSurvivesBatchReplayAndRotation(t *testing.T) {
 		t.Fatal("lost response fixture did not fire")
 	}
 	p := api.submitted[0]
-	if p.Envelope.Anchor != anchor || len(p.Envelope.TriggerIDs) != 2 || p.Envelope.TagTarget.Profile != "tagged" {
-		t.Fatalf("initial selection %v/%s", p.Envelope.TriggerIDs, p.Envelope.TagTarget.Profile)
+	if p.Envelope.Anchor != anchor || len(p.Envelope.TriggerIDs) != 2 || p.Envelope.Profile != "tagged" {
+		t.Fatalf("initial selection %v/%s", p.Envelope.TriggerIDs, p.Envelope.Profile)
 	}
 	mm.posts[1].Message = "@orpheus исправлено #glm"
 	mm.posts[1].EditAt = 2200
@@ -65,7 +65,7 @@ func TestOpeningProfileSurvivesBatchReplayAndRotation(t *testing.T) {
 	advance()
 	q := api.submitted[3]
 	if q.Envelope.TagTarget != (config.TagTarget{Profile: "tagged", SandboxTemplate: "opencode"}) || len(api.snapshot.Sessions) != 2 {
-		t.Fatalf("rotation forgot choice: %v", q.Envelope.TagTarget.Profile)
+		t.Fatalf("rotation forgot choice: %v", q.Envelope.Profile)
 	}
 }
 func TestConflictingProfileTagsRejectOnlyTheAnchor(t *testing.T) {
@@ -91,7 +91,7 @@ func TestConflictingProfileTagsRejectOnlyTheAnchor(t *testing.T) {
 		}
 		if withNeighbor {
 			advance()
-			if len(api.submitted) != 1 || api.submitted[0].Envelope.Anchor == key.Root || api.submitted[0].Envelope.TagTarget.Profile != "tagged" {
+			if len(api.submitted) != 1 || api.submitted[0].Envelope.Anchor == key.Root || api.submitted[0].Envelope.Profile != "tagged" {
 				t.Fatal("neighbor suppressed")
 			}
 		} else {
@@ -102,7 +102,7 @@ func TestConflictingProfileTagsRejectOnlyTheAnchor(t *testing.T) {
 			mm.posts[0].Message = "@orpheus #sl-deepseek"
 			mm.posts[0].EditAt = 2500
 			advance()
-			if len(api.submitted) != 1 || api.submitted[0].Envelope.TagTarget.Profile != "tagged" {
+			if len(api.submitted) != 1 || api.submitted[0].Envelope.Profile != "tagged" {
 				t.Fatal("edit could not start")
 			}
 		}

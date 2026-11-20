@@ -80,8 +80,8 @@ func TestOnlyEligibleOpeningPostSelectsProfile(t *testing.T) {
 				p.ID = id(7)
 			}
 			env, body, err := buildJoined(b, t.Context(), key, mattermost.Channel{ID: key.Channel, Type: tc.kind}, []mattermost.Post{p}, Snapshot{}, true, time.Now())
-			if err != nil || (env.Anchor != "") != tc.accepted || tc.accepted && (env.TagTarget.Profile != "G" || !strings.Contains(body, p.Message)) {
-				t.Fatal(env.Anchor, env.TagTarget.Profile, err)
+			if err != nil || (env.Anchor != "") != tc.accepted || tc.accepted && (env.Profile != "G" || !strings.Contains(body, p.Message)) {
+				t.Fatal(env.Anchor, env.Profile, err)
 			}
 		})
 	}

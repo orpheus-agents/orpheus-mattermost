@@ -190,8 +190,8 @@ template name in the Orpheus catalog. For workflows using the v0.7 string
 syntax, replace entries such as `fast: codex-fast` with
 `fast: {profile: codex-fast}` when upgrading the connector.
 
-The first eligible post selects the profile, including a reply that first
-mentions the bot in an existing discussion. In a batch, the earliest trigger
+The first eligible post selects the profile and template. It can be a reply
+that first mentions the bot in an existing discussion. In a batch, the earliest trigger
 wins (post ID breaks timestamp ties). The usual author and mention rules apply.
 Later posts, linked threads and attachments cannot change the choice.
 

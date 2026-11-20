@@ -238,7 +238,7 @@ func TestSessionPagination(t *testing.T) {
 func TestSnapshotReadsMessageMetadata(t *testing.T) {
 	key := conversation.Key{Source: "chat", Workflow: "assistant", Channel: strings.Repeat("a", 26), Root: strings.Repeat("b", 26)}
 	envelope := conversation.Envelope{Schema: 1, Source: key.Source, Workflow: key.Workflow, Channel: key.Channel, Root: key.Root, Anchor: strings.Repeat("c", 26), Kind: "initial", TriggerIDs: []string{strings.Repeat("c", 26)}, Render: conversation.Render{Version: 2, MaxChars: 12000},
-		TagTarget: config.TagTarget{Profile: "alternate", SandboxTemplate: "opencode"}}
+		Profile: "alternate", SandboxTemplate: "opencode"}
 	sid, rid := uuid.NewString(), uuid.NewString()
 	includeMetadata := true
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +273,7 @@ func TestSnapshotReadsMessageMetadata(t *testing.T) {
 	}
 	// Earlier inputs stored only profile_override. Their next session inherits
 	// the workflow template even after the operator adds a template to that tag.
-	envelope.TagTarget.SandboxTemplate = ""
+	envelope.SandboxTemplate = ""
 	snapshot, err = c.Snapshot(t.Context(), key)
 	if err != nil || len(snapshot.Sessions) != 1 || snapshot.Sessions[0].TagTarget != (config.TagTarget{Profile: "alternate"}) {
 		t.Fatal("missing legacy profile selection", err)
