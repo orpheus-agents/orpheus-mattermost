@@ -241,12 +241,15 @@ func TestSnapshotReadsMessageMetadata(t *testing.T) {
 		Profile: "alternate", SandboxTemplate: "opencode"}
 	sid, rid := uuid.NewString(), uuid.NewString()
 	includeMetadata := true
+	runWithServices := map[string]any{"id": rid, "session_id": sid, "number": 1, "status": "completed", "services": []string{"registry"}, "env_names": []string{}, "env_from": []string{}, "harness_env_names": []string{"HOST"}, "hooks": []any{map[string]any{"name": "after_run", "status": "completed", "env_names": []string{"HOOK_TOKEN"}}}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/v1/sessions":
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": sid, "namespace": key.Namespace(), "external_key": key.External(), "created_at": time.Now(), "configuration": map[string]any{"limits": map[string]int{"max_session_tokens": 1000}}}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": sid, "namespace": key.Namespace(), "external_key": key.External(), "created_at": time.Now(), "configuration": map[string]any{"sandbox": map[string]any{"services": []string{"agent-service"}, "env_names": []string{}, "env_from": []string{}}, "limits": map[string]int{"max_session_tokens": 1000}}}}})
 		case strings.HasSuffix(r.URL.Path, "/runs"):
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": rid, "session_id": sid, "number": 1, "status": "completed"}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"items": []any{runWithServices}})
+		case strings.HasSuffix(r.URL.Path, "/runs/"+rid):
+			_ = json.NewEncoder(w).Encode(runWithServices)
 		case strings.HasSuffix(r.URL.Path, "/history"):
 			message := map[string]any{"id": uuid.NewString(), "run_id": rid, "role": "user", "text": "clean task", "external_key": key.MessageKey(envelope.Anchor)}
 			if includeMetadata {
@@ -265,6 +268,10 @@ func TestSnapshotReadsMessageMetadata(t *testing.T) {
 	snapshot, err := c.Snapshot(t.Context(), key)
 	if err != nil || len(snapshot.Sessions) != 1 || len(snapshot.Sessions[0].Messages) != 1 {
 		t.Fatalf("metadata snapshot missing: %+v %v", snapshot, err)
+	}
+	detail, err := c.Run(t.Context(), sid, rid)
+	if err != nil || len(detail.Hooks) != 1 || detail.Hooks[0].Name != "after_run" {
+		t.Fatal(detail, err)
 	}
 	message := snapshot.Sessions[0].Messages[0]
 	decoded, err := conversation.Decode(message.Metadata)
