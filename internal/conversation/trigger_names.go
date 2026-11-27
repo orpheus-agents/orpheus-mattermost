@@ -41,5 +41,7 @@ func AddressesBot(body string, workflow config.Workflow, username string) bool {
 		}
 		end = min(node.Segment.Stop, lineEnd)
 	}
-	return workflow.MatchesTriggerName(strings.TrimLeftFunc(body[line.Start:end], unicode.IsSpace), end == lineEnd)
+	// Goldmark can omit trailing whitespace from the last text node.
+	reachesLineEnd := strings.TrimSpace(body[end:lineEnd]) == ""
+	return workflow.MatchesTriggerName(strings.TrimLeftFunc(body[line.Start:end], unicode.IsSpace), reachesLineEnd)
 }
