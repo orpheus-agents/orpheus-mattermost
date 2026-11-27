@@ -215,11 +215,11 @@ An unavailable profile or template produces the usual Orpheus rejection notice.
 These settings let people address the bot by name in a channel.
 
 ```yaml
-trigger_names: [Orpheus, Орфей, Орфеюшка, Орфи]
-trigger_name_regex: 'орфей-[0-9]+'
+trigger_names: [Orpheus, Orphy]
+trigger_name_regex: 'orpheus-[0-9]+'
 ```
 
-`Орфей, check the logs` matches the list and `ОРФЕЙ-42: check the logs`
+`Orphy, check the logs` matches the list and `ORPHEUS-42: check the logs`
 matches the expression. Either rule or an ordinary `@username` mention is
 enough. One post is accepted once even if several rules match.
 
