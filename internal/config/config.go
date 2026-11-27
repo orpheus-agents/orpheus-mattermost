@@ -82,6 +82,7 @@ type Workflow struct {
 	EffectiveRevision     string    `yaml:"-"`
 
 	ProfileByTag map[string]TagTarget `yaml:"-" json:"-"` // Admission policy, excluded from session revision.
+	triggerNames triggerNameMatcher
 }
 
 // TagTarget contains the explicit choices carried across session generations.
@@ -179,8 +180,10 @@ func parseWorkflow(raw []byte) (Workflow, error) {
 			continue
 		}
 		var front struct {
-			Workflow `yaml:",inline"`
-			Tags     yaml.Node `yaml:"profile_by_tag"`
+			Workflow         `yaml:",inline"`
+			Tags             yaml.Node `yaml:"profile_by_tag"`
+			TriggerNames     yaml.Node `yaml:"trigger_names"`
+			TriggerNameRegex yaml.Node `yaml:"trigger_name_regex"`
 		}
 		decoder := yaml.NewDecoder(strings.NewReader(strings.Join(lines[1:i], "\n")))
 		decoder.KnownFields(true)
@@ -193,6 +196,11 @@ func parseWorkflow(raw []byte) (Workflow, error) {
 			return Workflow{}, errors.New("front matter must contain exactly one YAML document")
 		}
 		w := front.Workflow
+		var err error
+		w.triggerNames, err = parseTriggerNames(front.TriggerNames, front.TriggerNameRegex)
+		if err != nil {
+			return Workflow{}, err
+		}
 		if !front.Tags.IsZero() {
 			tags, err := parseProfileTags(&front.Tags)
 			if err != nil {

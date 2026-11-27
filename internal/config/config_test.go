@@ -93,6 +93,51 @@ func TestMessageBatchWindow(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkflowTriggerNames(t *testing.T) {
+	c, err := example(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := c.Workflows[0]
+	for _, tc := range []struct {
+		settings, field string
+		names           bool
+	}{
+		{settings: "trigger_names: []\ntrigger_name_regex: ''"},
+		{settings: "trigger_names: ['Орфей', 'Ops Bot']", names: true},
+		{settings: "trigger_name_regex: 'орфей(?:-[0-9]+)?'", names: true},
+		{settings: "trigger_names: [Орфей]\ntrigger_name_regex: 'орфей(?:-[0-9]+)?'", names: true},
+		{settings: "trigger_names: ['']", field: "trigger_names"},
+		{settings: "trigger_names: Орфей", field: "trigger_names"},
+		{settings: "trigger_names: [42]", field: "trigger_names"},
+		{settings: "trigger_names: [' Орфей']", field: "trigger_names"},
+		{settings: `trigger_names: ["Орфей\nOrpheus"]`, field: "trigger_names"},
+		{settings: "trigger_name_regex: 42", field: "trigger_name_regex"},
+		{settings: "trigger_name_regex: '[confidential'", field: "trigger_name_regex"},
+		{settings: "trigger_name_regex: '.*'", field: "trigger_name_regex"},
+	} {
+		t.Run(tc.settings, func(t *testing.T) {
+			dir := t.TempDir()
+			writeWorkflow(t, dir, "assistant.md", strings.Replace(workflowText(t), "---\n", "---\n"+tc.settings+"\n", 1))
+			cfg, err := example(t, map[string]string{"WORKFLOWS_DIR": dir})
+			if tc.field != "" {
+				if err == nil || !strings.Contains(err.Error(), "workflow assistant.md") || !strings.Contains(err.Error(), tc.field) ||
+					strings.Contains(err.Error(), "confidential") || len(cfg.Workflows) != 0 {
+					t.Fatalf("unexpected validation result: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			w := cfg.Workflows[0]
+			if w.HasTriggerNames() != tc.names || w.EffectiveRevision != base.EffectiveRevision {
+				t.Fatalf("matcher availability or revision changed unexpectedly: %t, %s", w.HasTriggerNames(), w.EffectiveRevision)
+			}
+		})
+	}
+}
 func TestInvalidEnvironment(t *testing.T) {
 	for _, change := range []map[string]string{
 		{"ORPHEUS_BASE_URL": "https://user:private-token@example.com"},

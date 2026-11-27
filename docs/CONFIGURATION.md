@@ -48,7 +48,6 @@ mattermost:
 Provide the same secret reference in the Orpheus worker for hook `env_from`.
 The bot ID and username come from `/users/me`. Source identity is derived from
 the normalized URL and bot ID; changing a token for the same bot preserves it.
-There are no configured `source_id`, `expected_bot_id`, or mention aliases.
 
 Workflows using the same connection share routing. Different bots or servers can
 have independent generic workflows and DM owners. Use one `token_env` reference
@@ -153,7 +152,9 @@ semantic setting.
 | `include_ids`, `exclude_ids` | `[]` | Specialized workflows reserve their channels ahead of a generic workflow; they do not opt in to private or group channels |
 | `direct_messages` | `false` | One DM owner; messages from other allowed authors need no mention |
 | `private_channels`, `group_messages` | `false` | Explicit opt-in for private/group channels |
-| `start_on_mention` | `true` | Require a mention to start a new channel thread |
+| `start_on_mention` | `true` | Require a mention or configured name to start a new channel thread |
+| `trigger_names` | `[]` | Literal names accepted at the beginning of a post |
+| `trigger_name_regex` | `""` | Go regular expression for names at the beginning of a post |
 | `trigger_bot_ids` | `[]` | Allow listed external bots/webhooks; the connector's own bot follows the self-trigger rule below |
 | `send_commentary_messages` | `true` | Publish completed progress messages before the run finishes |
 | `draining` | `false` | Deliver accepted results without admitting new requests |
@@ -211,6 +212,30 @@ An unavailable profile or template produces the usual Orpheus rejection notice.
 
 ### Trigger and channel policy
 
+These settings let people address the bot by name in a channel.
+
+```yaml
+trigger_names: [Orpheus, Орфей, Орфеюшка, Орфи]
+trigger_name_regex: 'орфей-[0-9]+'
+```
+
+`Орфей, check the logs` matches the list and `ОРФЕЙ-42: check the logs`
+matches the expression. Either rule or an ordinary `@username` mention is
+enough. One post is accepted once even if several rules match.
+
+A name must start the first line of an opening Markdown paragraph. Use plain
+text for the name, with optional leading spaces. The name must end at the end
+of the line or before whitespace or `,`, `:`, `.`, `!`, `?` or `…`.
+Literal names are case-insensitive and can contain spaces. The regular
+expression is case-insensitive by default and must match nonempty text at the
+start of the line.
+
+An address can start a session from a channel post or a reply and can continue
+an existing session. The channel's workflow and author policy still apply.
+Following a reload, channel replay starts at `reconcile_from`. A previously
+passive post can qualify under the new name rules. These fields are excluded
+from the effective revision.
+
 The connector accepts its own bot's posts only when `root_id` is empty and the
 message explicitly mentions the bot's current username. This rule applies in
 every channel type, including DMs, regardless of `start_on_mention` or
@@ -249,7 +274,8 @@ and reload workflows. Rejected input is retried under the new effective revision
 without restarting the connector. Rejection notices are deduplicated by revision,
 reason and input.
 
-Subsequent channel requests require a mention even when `start_on_mention=false`.
+Subsequent channel requests require a mention or configured name even when
+`start_on_mention=false`.
 Orpheus owns sandbox pauses and expires old paused sandboxes. Budget exhaustion,
 sandbox deletion, lost sandbox/context, and revision changes can replace the
 session on the next request. See [session continuation](CONTINUATION.md).

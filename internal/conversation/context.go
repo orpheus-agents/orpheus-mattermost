@@ -138,7 +138,7 @@ func (b Builder) Trigger(p mattermost.Post, channel mattermost.Channel, existing
 	if !existing && !*b.Workflow.StartOnMention {
 		return true
 	}
-	return Mention(p.Message, []string{b.Bot.Username})
+	return AddressesBot(p.Message, b.Workflow, b.Bot.Username)
 }
 
 var linkPattern = regexp.MustCompile(`https?://[^\s<>\[\]"']+`)
