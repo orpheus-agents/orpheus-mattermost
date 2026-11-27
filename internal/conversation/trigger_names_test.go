@@ -39,6 +39,17 @@ func TestAddressesBot(t *testing.T) {
 		{"Орфеюшка: проверь", true},
 		{"орфеюшка…", true},
 		{"Орфи.", true},
+		{"Orpheus. Check the logs", true},
+		{"Orpheus... check the logs", true},
+		{"Orpheus. **Check the logs**", true},
+		{"Orpheus. \nCheck the logs", true},
+		{"Orpheus.  \nCheck the logs", true},
+		{"Orpheus.\t\nCheck the logs", true},
+		{"Orpheus.  \r\nCheck the logs", true},
+		{"Orpheus.**Check the logs**", false},
+		{"orpheus.simla.tech просто убираю с окты?", false},
+		{"Orpheus.Example.COM/path", false},
+		{"орфей-42.example.org", false},
 		{"орфи?", true},
 		{"ОРФЕЙ-42: проверь", true},
 		{"  OPS BOT\u00a0check", true},
@@ -92,6 +103,24 @@ func TestAddressRegexUsesOnlyOpeningProse(t *testing.T) {
 	w = namedWorkflow(t, `trigger_name_regex: '\b'`)
 	if AddressesBot("no name", w, "current") {
 		t.Error("accepted a zero-width match")
+	}
+}
+
+func TestAddressRegexSeesTrailingWhitespace(t *testing.T) {
+	w := namedWorkflow(t, "trigger_name_regex: 'Orpheus[.]$'")
+	if !AddressesBot("Orpheus.\nCheck the logs", w, "current") {
+		t.Fatal("end-anchored address did not match")
+	}
+	for _, body := range []string{
+		"Orpheus. \nCheck the logs",
+		"Orpheus.  \nCheck the logs",
+		"Orpheus.\t\nCheck the logs",
+		"Orpheus.  \r\nCheck the logs",
+		"Orpheus. **Check the logs**",
+	} {
+		if AddressesBot(body, w, "current") {
+			t.Errorf("end-anchored address matched %q", body)
+		}
 	}
 }
 

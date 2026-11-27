@@ -69,13 +69,15 @@ func parseTriggerNames(names, expression yaml.Node) (triggerNameMatcher, error) 
 	if len(patterns) == 0 {
 		return triggerNameMatcher{}, nil
 	}
-	const separator = `[\t-\r \x{85}\p{Z},:.!?…]`
+	const whitespace = `\t-\r \x{85}\p{Z}`
+	// A period inside a hostname is part of the text, not address punctuation.
+	const separator = `[` + whitespace + `,:!?…]|\.+[` + whitespace + `]`
 	prefix := `\A(` + strings.Join(patterns, "|") + `)`
-	line, err := regexp.Compile(prefix + `(?:` + separator + `|\z)`)
+	line, err := regexp.Compile(prefix + `(?:` + separator + `|\.*\z)`)
 	if err != nil {
 		return triggerNameMatcher{}, errors.New("trigger_names and trigger_name_regex exceed regular expression limits")
 	}
-	span, err := regexp.Compile(prefix + separator)
+	span, err := regexp.Compile(prefix + `(?:` + separator + `)`)
 	if err != nil {
 		return triggerNameMatcher{}, errors.New("trigger_names and trigger_name_regex exceed regular expression limits")
 	}

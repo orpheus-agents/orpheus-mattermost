@@ -41,5 +41,9 @@ func AddressesBot(body string, workflow config.Workflow, username string) bool {
 		}
 		end = min(node.Segment.Stop, lineEnd)
 	}
+	// Keep trailing source whitespace that Goldmark omits so explicit regex anchors see the full line.
+	if strings.TrimSpace(body[end:lineEnd]) == "" {
+		end = lineEnd
+	}
 	return workflow.MatchesTriggerName(strings.TrimLeftFunc(body[line.Start:end], unicode.IsSpace), end == lineEnd)
 }
