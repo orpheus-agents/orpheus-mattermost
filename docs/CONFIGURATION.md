@@ -225,7 +225,9 @@ enough. One post is accepted once even if several rules match.
 
 A name must start the first line of an opening Markdown paragraph. Use plain
 text for the name, with optional leading spaces. The name must end at the end
-of the line or before whitespace or `,`, `:`, `.`, `!`, `?` or `…`.
+of the line or before whitespace or `,`, `:`, `!`, `?` or `…`. A period or a
+series of periods can follow the name before whitespace or the end of the line.
+For example, `Orpheus. Check the logs` is an address. `orpheus.example.com` is a hostname.
 Literal names are case-insensitive and can contain spaces. The regular
 expression is case-insensitive by default and must match nonempty text at the
 start of the line.
