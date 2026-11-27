@@ -106,6 +106,24 @@ func TestAddressRegexUsesOnlyOpeningProse(t *testing.T) {
 	}
 }
 
+func TestAddressRegexSeesTrailingWhitespace(t *testing.T) {
+	w := namedWorkflow(t, "trigger_name_regex: 'Orpheus[.]$'")
+	if !AddressesBot("Orpheus.\nCheck the logs", w, "current") {
+		t.Fatal("end-anchored address did not match")
+	}
+	for _, body := range []string{
+		"Orpheus. \nCheck the logs",
+		"Orpheus.  \nCheck the logs",
+		"Orpheus.\t\nCheck the logs",
+		"Orpheus.  \r\nCheck the logs",
+		"Orpheus. **Check the logs**",
+	} {
+		if AddressesBot(body, w, "current") {
+			t.Errorf("end-anchored address matched %q", body)
+		}
+	}
+}
+
 func TestNamedTriggerAuthorPolicy(t *testing.T) {
 	w := namedWorkflow(t, "trigger_names: [Орфей]\ntrigger_bot_ids: ["+id(3)+"]")
 	b := Builder{Workflow: w, Bot: mattermost.User{ID: id(9), Username: "orpheus"}}
