@@ -155,7 +155,7 @@ func candidate(p mattermost.Post, ch mattermost.Channel, w config.Workflow, bot 
 	if strings.TrimSpace(p.Message) == "" && len(p.FileIDs) == 0 {
 		return false
 	}
-	return ch.Type == "D" || !*w.StartOnMention || conversation.Mention(p.Message, []string{bot.Username})
+	return ch.Type == "D" || !*w.StartOnMention || conversation.AddressesBot(p.Message, w, bot.Username)
 }
 func (r *Runtime) Handler() http.Handler {
 	mux := http.NewServeMux()

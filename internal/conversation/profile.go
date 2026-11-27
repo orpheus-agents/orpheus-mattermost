@@ -17,7 +17,7 @@ var ErrConflictingProfileTags = errors.New("tags select different model profiles
 
 // Keep Markdown delimiters inside a bare URL in its link node (e.g. /path/**#tag**).
 var urlTail = regexp.MustCompile(`^[^\s\p{Z}<>\[\]"']+`)
-var profileMarkdown = goldmark.New(goldmark.WithExtensions(extension.NewLinkify(
+var proseMarkdown = goldmark.New(goldmark.WithExtensions(extension.NewLinkify(
 	extension.WithLinkifyURLRegexp(urlTail), extension.WithLinkifyWWWRegexp(urlTail),
 )))
 var profileToken = regexp.MustCompile(`^#([A-Za-z][A-Za-z0-9_-]*)[.,;:!?…"'\p{Pe}\p{Pf}]*$`)
@@ -28,7 +28,7 @@ func taggedProfile(body string, tags map[string]config.TagTarget, defaultTemplat
 		return config.TagTarget{}, nil
 	}
 	source := []byte(body)
-	tree := profileMarkdown.Parser().Parse(text.NewReader(source))
+	tree := proseMarkdown.Parser().Parse(text.NewReader(source))
 	var target config.TagTarget
 	err := ast.Walk(tree, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {

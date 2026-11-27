@@ -47,8 +47,7 @@ and anchor post; they do not replace the accepted input snapshot.
 
 Process settings come from ENV. Mattermost URL and token reference, workflow policy,
 and agent instructions live in the same Markdown file. The connector discovers
-the bot ID and username through `/users/me`; no source ID, expected bot ID, or
-mention-alias setting is needed.
+the bot ID and username through `/users/me`.
 
 `AGENTBOX_API_KEY` is optional. When set, the connector prepares attachment
 clarifications immediately through SDK. Without it, text clarifications remain
